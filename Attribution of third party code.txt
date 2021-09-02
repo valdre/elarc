@@ -1,0 +1,20 @@
+This software contains parts of third party code which are publicy distributed
+under GPLv2 or later licence. In particular:
+
+vedaloss.f, ecorr_veda.f and loss1.vedasac are part of the KaliVeda data
+analysis framework ("http://indra.in2p3.fr/kaliveda/")
+
+functions ELoss::Schwalm and ELoss::Nuclear have been adapted by myself from
+range, by Ricardo Yanez ("http://www.calel.org/range.html")
+
+NIST tables were downloaded from "https://physics.nist.gov/"
+(PSTAR and ASTAR online tools)
+
+SRIM tables were calculated using SRIM 2013 by James F. Ziegler
+("http://www.srim.org/")
+
+NIST and SRIM tables have been interpolated and processed by myself in order to
+produce text files with uniform format and units
+
+"Barbui" tables are generated from SRIM inputs using correction coefficents
+provided by M. Barbui et al., Nucl. Instrum. Meth. B 268, 2377 (2010)

@@ -1,0 +1,8 @@
+air         N78O21Ar  gas
+CF4         CF4       gas
+CsI         CsI      4510
+isobutane   C4H10     gas
+methane     CH4       gas
+mylar       C10H8O4  1395
+NE102       CH2      1032
+water       H2O      1000
