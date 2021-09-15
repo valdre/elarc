@@ -1,6 +1,9 @@
 This software contains parts of third party code which are publicy distributed
 under GPLv2 or later licence. In particular:
 
+Spline.h and Spline.cpp were separated by myself from "spline.h" by Tino Kluge
+(ttk448 at gmail.com)
+
 vedaloss.f, ecorr_veda.f and loss1.vedasac are part of the KaliVeda data
 analysis framework ("http://indra.in2p3.fr/kaliveda/")
 

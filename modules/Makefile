@@ -3,7 +3,7 @@
 all: ELoss.o ELossDict.cxx ecorr_veda.o vedaloss.o
 	
 
-.cpp.o: 
+.cpp.o:
 	g++ -Wall -Wextra -c -o $@ $<
 
 .f.o:

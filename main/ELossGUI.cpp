@@ -516,16 +516,6 @@ void MyMainFrame::Calculate() {
 			out_res = 0;
 	}
 	
-	tbcalc->ChangeBackground(green->GetPixel());
-	lein1->SetTextColor(black);
-	lthk1->SetTextColor(black);
-	llst1->SetTextColor(black);
-	lres1->SetTextColor(black);
-	lein2->SetTextColor(black);
-	lthk2->SetTextColor(black);
-	llst2->SetTextColor(black);
-	lres2->SetTextColor(black);
-	
 	char fmtstr[STRMAXL];
 	
 	printval(out_ein * 1.e6, "eV", fmtstr);
@@ -537,6 +527,11 @@ void MyMainFrame::Calculate() {
 	if(out_res >= EZERO) {
 		printval(out_res * 1.e6, "eV", fmtstr);
 		lres1->SetText(fmtstr);
+		lres1->SetTextColor(black);
+	}
+	else {
+		lres1->SetText("-");
+		lres1->SetTextColor(gray);
 	}
 	
 	printval(el.MeV_to_AMeV(out_ein, proA) * 1.e6, "eV/u",  fmtstr);
@@ -548,15 +543,20 @@ void MyMainFrame::Calculate() {
 	if(out_res >= EZERO) {
 		printval(el.MeV_to_AMeV(out_res, proA) * 1.e6, "eV/u",  fmtstr);
 		lres2->SetText(fmtstr);
+		lres2->SetTextColor(black);
 	}
-	
-	if(out_res < EZERO) {
-		lres1->SetTextColor(gray);
+	else {
+		lres2->SetText("-");
 		lres2->SetTextColor(gray);
-		lres1->SetText("-");
-		lres1->SetText("-");
 	}
 	
+	tbcalc->ChangeBackground(green->GetPixel());
+	lein1->SetTextColor(black);
+	lthk1->SetTextColor(black);
+	llst1->SetTextColor(black);
+	lein2->SetTextColor(black);
+	lthk2->SetTextColor(black);
+	llst2->SetTextColor(black);
 	up = true;
 	return;
 }

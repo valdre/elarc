@@ -1,6 +1,8 @@
 air         N78O21Ar  gas
 CF4         CF4       gas
 CsI         CsI      4510
+H4C5O2      C10H8O4  1395
+heptane     C7H16     679.5
 isobutane   C4H10     gas
 methane     CH4       gas
 mylar       C10H8O4  1395

@@ -1,12 +1,13 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 22/12/2020                          *
+*                         Simone Valdre' - 03/09/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
-*******************************************************************************/
+*******************************************************************************/  
 
-#ifndef SHCOL
-#define SHCOL
+#ifndef _SHELLCOLORS
+#define _SHELLCOLORS
+
 
 //SHELL COLORS
 //Normal output

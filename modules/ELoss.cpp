@@ -1,6 +1,6 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 25/08/2021                          *
+*                         Simone Valdre' - 15/09/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
 *******************************************************************************/
@@ -21,7 +21,7 @@ ELoss::ELoss() {
 	tables.clear();
 	
 	LoadDB();
-	vedaloss_();
+	vedaDB = false;
 }
 
 ELoss::~ELoss() {
@@ -137,8 +137,6 @@ int ELoss::ReadFile(const char *fn, std::vector< std::vector< std::string > > &a
 //Adds a new material: usually rho, P and T are not needed, but they can be provided in order to override the DB values or if the compound is not in the DB
 //rho=0 => force gas
 int ELoss::AddAbsorber(const char *name, const double rho, const double P, const double T) {
-	struct material Abs;
-	
 	printf(BLD "AddAbs  " NRM " adding absorber %s...\n", name);
 	for(unsigned j = 0; j < mateLS.size(); j++) {
 		if(mateLS[j].Name == name) {
@@ -150,6 +148,17 @@ int ELoss::AddAbsorber(const char *name, const double rho, const double P, const
 		}
 	}
 	
+	struct material Abs;
+	if(SetAbsorber(Abs, name, rho, P, T) < 0) return -1;
+	
+	Abs.mid = Mcnt++;
+	mateLS.push_back(Abs);
+	mateID.resize(Abs.mid + 1, -1);
+	mateID[Abs.mid] = (int)(mateLS.size()) - 1;
+	return Abs.mid;
+}
+
+int ELoss::SetAbsorber(struct material &Abs, const char *name, const double rho, const double P, const double T) {
 	//Assign name
 	Abs.Name = name;
 	//Search name or formula in DB
@@ -241,12 +250,8 @@ int ELoss::AddAbsorber(const char *name, const double rho, const double P, const
 	}
 	
 	SetVedaParam(form, Abs);
-	
-	Abs.mid = Mcnt++;
-	mateLS.push_back(Abs);
-	mateID.resize(Abs.mid + 1, -1);
-	mateID[Abs.mid] = (int)(mateLS.size()) - 1;
-	return Abs.mid;
+	Abs.mid = -1;
+	return 0;
 }
 
 int ELoss::ParseFormula(const char *form, std::vector< int > &Z, std::vector< int > &W, std::vector< double > &A) {
@@ -489,146 +494,86 @@ void ELoss::Integral(const std::vector< double > &vE, std::vector< double > &vR)
 	return;
 }
 
-//generate range table from NIST input files
+//generate range table from input files
 // first column  ->  energy per nucleon
-//second column  ->  electronic dE/dx
-// third column  ->     nuclear dE/dx
-int ELoss::TbNist(const int Zp, const struct material &mat) {
+//second column  ->  range per nucleon
+// third column  ->  electronic dE/dx
+//fourth column  ->     nuclear dE/dx
+int ELoss::Tab(const int form, const int Zp, const struct material &mat) {
+	const char flabel[4][8] = {"nist", "barbui", "srim", "schwalm"};
 	//First search for existing table
 	unsigned j;
 	for(j = 0; j < tables.size(); j++) {
-		if((tables[j].z == Zp) && (tables[j].mid == mat.mid) && (tables[j].form == NIST)) break;
+		if((tables[j].z == Zp) && (tables[j].mid == mat.mid) && (tables[j].form == form)) break;
 	}
-	if(j < tables.size()) return j;
+	if(j < tables.size()) {
+		printf(BLD "Tab     " NRM " %s energy loss table selected!\n", flabel[form - 1]);
+		return j;
+	}
 	
 	//If the table doesn't exist, then create a new one!
 	char fn[STRMAXL];
 	FILE *f;
-	printf(BLD "TbNist  " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
-	sprintf(fn, "db/tables/nist_%d_%s.txt", Zp, mat.Form.c_str());
-	if((f = fopen(fn, "r")) == NULL) {
-		printf(UP YEL "TbNist  " NRM " %s not found\n", fn);
+	printf(BLD "Tab     " NRM " Table creation for Z =%3d in %s (%s formula)\n", Zp, mat.Form.c_str(), flabel[form - 1]);
+	sprintf(fn, "%s/%s_%d_%s.tab", TABLFOLD, flabel[form - 1], Zp, mat.Form.c_str());
+	f = fopen(fn, "r");
+	if((f == NULL) && (form == BARBUI)) {
+		BarbTab(Zp, mat);
+		f = fopen(fn, "r");
+	}
+	if((f == NULL) && (form == SCHWALM)) {
+		SchwTab(Zp, mat);
+		f = fopen(fn, "r");
+	}
+	
+	if(f == NULL) {
+		printf(UP YEL "Tab     " NRM " %s not found                   \n", fn);
 		return -1;
 	}
 	
 	int ret;
-	double e, dd1, dd2, emin, emax = 0;
+	double e, rng, dd1, dd2, emax = 0;
 	std::vector< double > vE, vR, vDe, vDn;
-	
+	char row[STRMAXL];
 	for(;;) {
-		ret = fscanf(f, " %lg %lg %lg ", &e, &dd1, &dd2);
-		if(ret == EOF) break;
-		if((ret != 3) || (e < EMIN)) continue;
+		if(fgets(row, STRMAXL, f) == NULL) break;
+		ret = sscanf(row, " %lg %lg %lg %lg ", &e, &rng, &dd1, &dd2);
+		if(ret != 4) continue;
 		
-		if(vE.size() == 0) {
-			vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
-			emin = e;
-		}
-		
-		vE.push_back(e); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));
+		vE.push_back(e); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(rng);
 		if(e > emax) emax = e;
 	}
 	fclose(f);
 	
 	if(vE.size() == 0) {
-		printf(UP YEL "TbNist  " NRM " table creation failed\n");
+		printf(UP YEL "Tab     " NRM " table creation failed                  \n");
 		return -1;
 	}
-	Integral(vE, vR);
 	
 	struct table tb;
-	tb.z = Zp; tb.mid = mat.mid; tb.form = NIST;
-	tb.emin = emin; tb.emax = emax;
+	tb.z = Zp; tb.mid = mat.mid; tb.form = form;
+	tb.emax = emax;
 	tb.range.set_points(vE, vR);
 	tb.energy.set_points(vR, vE);
 	tb.dedx_e.set_points(vE, vDe);
 	tb.dedx_n.set_points(vE, vDn);
 	tables.push_back(tb);
+	printf(BLD "Tab     " NRM " %s energy loss table selected!\n", flabel[form - 1]);
 	return (int)(tables.size()) - 1;
 }
 
-//generate range table from SRIM input files
-// first column  ->  energy per nucleon
-//second column  ->  electronic dE/dx
-// third column  ->     nuclear dE/dx
-int ELoss::TbSrim(const int Zp, const struct material &mat) {
-	//First search for existing table
-	unsigned j;
-	for(j = 0; j < tables.size(); j++) {
-		if((tables[j].z == Zp) && (tables[j].mid == mat.mid) && (tables[j].form == SRIM)) break;
-	}
-	if(j < tables.size()) return j;
-	
-	//If the table doesn't exist, then create a new one!
-	char fn[STRMAXL];
-	FILE *f;
-	
-	printf(BLD "TbSrim  " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
-	sprintf(fn, "db/tables/srim_%d_%s.txt", Zp, mat.Form.c_str());
-	if((f = fopen(fn, "r")) == NULL) {
-		printf(UP YEL "TbSrim  " NRM " %s not found\n", fn);
-		return -1;
-	}
-	
-	int ret;
-	double e, dd1, dd2, emin, emax = 0;
-	std::vector< double > vE, vR, vDe, vDn;
-	
-	for(;;) {
-		ret = fscanf(f, " %lg %lg %lg ", &e, &dd1, &dd2);
-		if(ret == EOF) break;
-		if((ret != 3) || (e < EMIN)) continue;
-		
-		if(vE.size() == 0) {
-			vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
-			emin = e;
-		}
-		
-		vE.push_back(e); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));
-		if(e > emax) emax = e;
-	}
-	fclose(f);
-	
-	if(vE.size() == 0) {
-		printf(UP YEL "TbSrim  " NRM " table creation failed\n");
-		return -1;
-	}
-	Integral(vE, vR);
-	
-	struct table tb;
-	tb.z = Zp; tb.mid = mat.mid; tb.form = SRIM;
-	tb.emin = emin; tb.emax = emax;
-	tb.range.set_points(vE, vR);
-	tb.energy.set_points(vR, vE);
-	tb.dedx_e.set_points(vE, vDe);
-	tb.dedx_n.set_points(vE, vDn);
-	tables.push_back(tb);
-	return (int)(tables.size()) - 1;
-}
-
-//generate range table from SRIM input files with M. Barbui corrections
-// first column  ->  energy per nucleon
-//second column  ->  electronic dE/dx
-// third column  ->     nuclear dE/dx
-int ELoss::TbBarb(const int Zp, const struct material &mat) {
-	//First search for existing table
-	unsigned j;
-	for(j = 0; j < tables.size(); j++) {
-		if((tables[j].z == Zp) && (tables[j].mid == mat.mid) && (tables[j].form == BARBUI)) break;
-	}
-	if(j < tables.size()) return j;
-	
-	//If the table doesn't exist, then create a new one!
+//generate intermediate file from SRIM input files with M. Barbui corrections
+int ELoss::BarbTab(const int Zp, const struct material &mat) {
 	char fn[STRMAXL];
 	FILE *f;
 	
 	if((!mat.isgas) && (!(mat.Form == "C10H8O4")) && (!(mat.Z.size() == 1))) {
-		printf(YEL "TbBarb  " NRM " Barbui corrections work on gases, mylar and simple elements only!\n");
+		printf(YEL "BarbTab " NRM " Barbui corrections work on gases, mylar and simple elements only!\n");
 		return -1;
 	}
 	
-	printf(BLD "TbBarb  " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
-	sprintf(fn, "db/tables/srim_1_%s.txt", mat.Form.c_str());
+	printf(BLD "BarbTab " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
+	sprintf(fn, "%s/srim_1_%s.tab", TABLFOLD, mat.Form.c_str());
 	if((f = fopen(fn, "r")) == NULL) {
 		printf(UP YEL "TbBarb  " NRM " %s not found\n", fn);
 		return -1;
@@ -660,12 +605,13 @@ int ELoss::TbBarb(const int Zp, const struct material &mat) {
 	}
 	
 	int ret;
-	double e, dd1, dd2, ec, emin, emax = 0;
+	double e, dd1, dd2, ec;
 	std::vector< double > vE, vR, vDe, vDn;
-	
+	vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
+	char row[STRMAXL];
 	for(;;) {
-		ret = fscanf(f, " %lg %lg %lg ", &e, &dd1, &dd2);
-		if(ret == EOF) break;
+		if(fgets(row, STRMAXL, f) == NULL) break;
+		ret = sscanf(row, " %lg %*g %lg %lg ", &e, &dd1, &dd2);
 		if((ret != 3) || (e < EMIN)) continue;
 		
 		//M. Barbui SRIM corrections
@@ -687,64 +633,52 @@ int ELoss::TbBarb(const int Zp, const struct material &mat) {
 		if(ec > 0) dd1 *= pow(ec * (double)Zp, 2.);
 		else dd1 = 0.;
 		
-		if(vE.size() == 0) {
-			vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
-			emin = e;
-		}
-		
 		vE.push_back(e); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));
-		if(e > emax) emax = e;
 	}
 	fclose(f);
 	
 	if(vE.size() == 0) {
-		printf(UP YEL "TbBarb  " NRM " table creation failed\n");
+		printf(UP YEL "BarbTab " NRM " table creation failed\n");
 		return -1;
 	}
 	Integral(vE, vR);
 	
-	struct table tb;
-	tb.z = Zp; tb.mid = mat.mid; tb.form = BARBUI;
-	tb.emin = emin; tb.emax = emax;
-	tb.range.set_points(vE, vR);
-	tb.energy.set_points(vR, vE);
-	tb.dedx_e.set_points(vE, vDe);
-	tb.dedx_n.set_points(vE, vDn);
-	tables.push_back(tb);
-	return (int)(tables.size()) - 1;
+	char name[STRMAXL];
+	sprintf(name, "%s/barbui_%d_%s.tab", TABLFOLD, Zp, mat.Form.c_str());
+	FILE *fout = fopen(name, "w");
+	fprintf(fout, "#    Energy           Range       dE/dx (elec)    dE/dx (nucl)\n");
+	fprintf(fout, "#   [MeV/u]         [mg/cm2]     [MeV/(mg/cm2)]  [MeV/(mg/cm2)]\n");
+	fprintf(fout, "# ------------------------------------------------------------\n");
+	for(unsigned j=0; j<vE.size(); j++) {
+		fprintf(fout, "   %.4le      %.4le      %.4le      %.4le\n", vE[j], vR[j], vDe[j], vDn[j]);
+	}
+	fclose(fout);
+	
+	return 1;
 }
 
 //generate range table from Braune-Schwalm formula
-int ELoss::TbSchw(const int Zp, const struct material &mat) {
-	//First search for existing table
-	unsigned j;
-	for(j = 0; j < tables.size(); j++) {
-		if((tables[j].z == Zp) && (tables[j].mid == mat.mid) && (tables[j].form == SCHWALM)) break;
-	}
-	if(j < tables.size()) return j;
-	
-	//If the table doesn't exist, then create a new one!
-	printf(BLD "TbSchw  " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
+int ELoss::SchwTab(const int Zp, const struct material &mat) {
+	printf(BLD "SchwTab " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
 	
 	double e, dd1, dd2, e1, y1, e2, y2, ec, yc;
 	std::vector< double > vE, vR, vDe, vDn;
+	vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);			//j = 0
 	
 	const double emin = (double)EMIN;
 	const double emax = (double)EMAX;
 	
 	dd1 = Schwalm(Zp, emin, mat); dd2 = Nuclear(Zp, emin, mat);
-	vE.push_back(0);    vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));			//j = 0
 	vE.push_back(emin); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));			//j = 1
 	
-	ec  = (emax + emin) / 2.;
-	dd1 = Schwalm(Zp, ec, mat); dd2 = Nuclear(Zp, ec, mat);
+	ec  = (emax + emin) / 2.; dd1 = Schwalm(Zp, ec, mat); dd2 = Nuclear(Zp, ec, mat);
 	vE.push_back(ec); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));			//j = 2
 	
 	dd1 = Schwalm(Zp, emax, mat); dd2 = Nuclear(Zp, emax, mat);
 	vE.push_back(emax); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));			//j = 3
 	
 	int pos;
-	for(j = 1; j + 2 < vE.size(); j++) {
+	for(unsigned j = 1; j + 2 < vE.size(); j++) {
 		e1 = vE[j];     y1 = vR[j];
 		ec = vE[j + 1]; yc = vR[j + 1];
 		e2 = vE[j + 2]; y2 = vR[j + 2];
@@ -772,15 +706,264 @@ int ELoss::TbSchw(const int Zp, const struct material &mat) {
 	}
 	Integral(vE, vR);
 	
-	struct table tb;
-	tb.z = Zp; tb.mid = mat.mid; tb.form = SCHWALM;
-	tb.emin = emin; tb.emax = emax;
-	tb.range.set_points(vE, vR);
-	tb.energy.set_points(vR, vE);
-	tb.dedx_e.set_points(vE, vDe);
-	tb.dedx_n.set_points(vE, vDn);
-	tables.push_back(tb);
-	return (int)(tables.size()) - 1;
+	char name[STRMAXL];
+	sprintf(name, "%s/schwalm_%d_%s.tab", TABLFOLD, Zp, mat.Form.c_str());
+	FILE *fout = fopen(name, "w");
+	fprintf(fout, "#    Energy           Range       dE/dx (elec)    dE/dx (nucl)\n");
+	fprintf(fout, "#   [MeV/u]         [mg/cm2]     [MeV/(mg/cm2)]  [MeV/(mg/cm2)]\n");
+	fprintf(fout, "# ------------------------------------------------------------\n");
+	for(unsigned j=0; j<vE.size(); j++) {
+		fprintf(fout, "   %.4le      %.4le      %.4le      %.4le\n", vE[j], vR[j], vDe[j], vDn[j]);
+	}
+	fclose(fout);
+	
+	return 1;
+}
+
+void stechio(std::vector< double > &w, std::vector< int > &iw) {
+	unsigned i, nelem = w.size();
+	double stk, mind = 1.e99, diff;
+	unsigned chk, imin = 0;
+	
+	iw.resize(nelem);
+	for(i = 1; i < 500; i++) {
+		chk = 0;
+		diff = 0;
+		for(unsigned j = 0; j < nelem; j++) {
+			stk = ((double)i) * w[j] / 100.;
+			iw[j] = (int)(0.5 + stk);
+			if(fabs(stk - (double)(iw[j])) <= 0.0001 * (double)i) chk++;
+			diff += (stk - (double)(iw[j])) * (stk - (double)(iw[j]));
+		}
+		if(diff < mind) {
+			mind = diff;
+			imin = i;
+		}
+		if(chk == nelem) break;
+	}
+	if(i == 500) {
+		for(unsigned j = 0; j < nelem; j++) iw[j] = (int)(0.5 + ((double)imin) * w[j] / 100.);
+	}
+	return;
+}
+
+int ELoss::NistTab(const char *fn, bool over /*= false*/) {
+	FILE *f = fopen(fn, "r");
+	if(f == NULL) {
+		perror(YEL "fopen   " NRM);
+		return -1;
+	}
+	int z, a;
+	char name[STRMAXL];
+	int ret = sscanf(fn, NISTFOLD "/%d_%d_%[^.].txt", &a, &z, name);
+	if(ret != 3) {
+		printf(YEL "NistTab " NRM " file name parsing failed\n");
+		fclose(f);
+		return -1;
+	}
+	struct material Abs;
+	ret = SetAbsorber(Abs, name);
+	if(ret < 0) {
+		fclose(f);
+		return -1;
+	}
+	
+	sprintf(name, "%s/nist_%d_%s.tab", TABLFOLD, z, Abs.Form.c_str());
+	FILE *fout = fopen(name, "r");
+	if(fout != NULL) {
+		fclose(fout);
+		if(!over) {
+			printf(BLD "NistTab " NRM " Table for Z =%3d in %s already in DB, skipping...\n", z, Abs.Form.c_str());
+			fclose(f);
+			return 0;
+		}
+	}
+	
+	printf(BLD "NistTab " NRM " Table creation for Z =%3d in %s\n", z, Abs.Form.c_str());
+	double e, dd1, dd2, rng;
+	std::vector< double > vE, vR, vDe, vDn;
+	
+	char row[STRMAXL];
+	vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
+	for(;;) {
+		if(fgets(row, STRMAXL, f) == NULL) break;
+		ret = sscanf(row, " %lg %lg %lg %lg ", &e, &dd1, &dd2, &rng);
+		e /= (double)a;
+		if((ret != 4) || (e < EMIN)) continue;
+		dd1 *= 1.e-3; dd2 *= 1.e-3; rng *= 1.e+3 / (double)a;
+		vE.push_back(e); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(rng);
+	}
+	fclose(f);
+	
+	if(vE.size() == 0) {
+		printf(UP YEL "NistTab " NRM " table creation failed\n");
+		return -1;
+	}
+	
+	fout = fopen(name, "w");
+	fprintf(fout, "#    Energy           Range       dE/dx (elec)    dE/dx (nucl)\n");
+	fprintf(fout, "#   [MeV/u]         [mg/cm2]     [MeV/(mg/cm2)]  [MeV/(mg/cm2)]\n");
+	fprintf(fout, "# ------------------------------------------------------------\n");
+	for(unsigned j=0; j<vE.size(); j++) {
+		fprintf(fout, "   %.4le      %.4le      %.4le      %.4le\n", vE[j], vR[j], vDe[j], vDn[j]);
+	}
+	fclose(fout);
+	return 1;
+}
+
+int ELoss::SrimTab(const char *fn, bool over /*= false*/) {
+	FILE *f = fopen(fn, "r");
+	if(f == NULL) {
+		perror(YEL "fopen   " NRM);
+		return -1;
+	}
+	
+	int z;
+	double a, rho = -1;
+	double e, dd1, dd2, rng;
+	std::vector< double > vE, vR, vDe, vDn;
+	std::vector< std::string > elem;
+	std::vector< double > w;
+	std::vector< int > iw;
+	int ret, state = 0;
+	char row[STRMAXL], rstr[STRMAXL], name[STRMAXL], u1[10], u2[10];
+	double rw;
+	FILE *fout;
+	for(; state >= 0;) {
+		if(fgets(row, STRMAXL, f) == NULL) break;
+		for(unsigned j = 0; j < strlen(row); j++) {
+			if(row[j] == ',') row[j] = '.';
+		}
+		
+		switch(state) {
+			case 0:
+				ret = sscanf(row, " Ion = %*s [%d] . Mass = %lg amu", &z, &a);
+				if(ret == 2) state++;
+				break;
+			case 1:
+				ret = sscanf(row, " Target Density =  %lg g/cm3 = %*g atoms/cm3", &rho);
+				if(ret == 1) state++;
+				break;
+			case 2:
+				if(strncmp(row, "    ----   ----   -------   -------", 30) == 0) state++;
+				break;
+			case 3:
+				if(strncmp(row, " ====================================", 30) == 0) {
+					stechio(w, iw);
+					name[0] = '\0';
+					for(unsigned j = 0; j < elem.size(); j++) {
+						if(iw[j] <= 1) strcpy(rstr, elem[j].c_str());
+						else sprintf(rstr, "%s%d", elem[j].c_str(), iw[j]);
+						if(strlen(name) + strlen(rstr) < STRMAXL) strcat(name, rstr);
+					}
+					struct material Abs;
+					ret = SetAbsorber(Abs, name);
+					if(ret < 0) {
+						state = -1;
+						break;
+					}
+					sprintf(name, "%s/srim_%d_%s.tab", TABLFOLD, z, Abs.Form.c_str());
+					fout = fopen(name, "r");
+					if(fout != NULL) {
+						fclose(fout);
+						if(!over) {
+							printf(BLD "SrimTab " NRM " Table for Z =%3d in %s already in DB, skipping...\n", z, Abs.Form.c_str());
+							state = -2;
+							break;
+						}
+					}
+					rho *= 1000.;
+					printf(BLD "SrimTab " NRM " Table creation for Z =%3d (A =%3.0f) in %s (rho =%5.0f mg/cm3)\n", z, a, Abs.Form.c_str(), rho);
+					vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
+					state++;
+				}
+				else {
+					ret = sscanf(row, " %s %*d %lg %*g ", rstr, &rw);
+					if(ret == 2) {
+						elem.push_back(rstr);
+						w.push_back(rw);
+					}
+				}
+				break;
+			case 4:
+				ret = sscanf(row, " %lg %10s %lg %lg %lg %10s %*g %*s %*g %*s", &e, u1, &dd1, &dd2, &rng, u2);
+				if(ret == 6) {
+					if(u1[0] == 'e')      e *= 1.e-6;
+					else if(u1[0] == 'k') e *= 1.e-3;
+					else if(u1[0] == 'G') e *= 1.e3;
+					e /= a;
+					if(u2[0] == 'A')                       rng *= 1.e-4;
+					else if(u2[0] == 'm' && u2[1] == 'm')  rng *= 1.e3;
+					else if(u2[0] == 'm' && u2[1] == '\0') rng *= 1.e6;
+					rng = um_to_mgcm2(rng, rho) / a;
+					vE.push_back(e); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(rng);
+				}
+		}
+	}
+	fclose(f);
+	//state == -1 -> error
+	//state == -2 -> material already in db (and overwrite flag is false)
+	if(state == -1) return -1;
+	if(state == -2) return 0;
+	
+	if(vE.size() == 0) {
+		printf(UP YEL "SrimTab " NRM " table creation failed                                       \n");
+		return -1;
+	}
+	
+	fout = fopen(name, "w");
+	fprintf(fout, "#    Energy           Range       dE/dx (elec)    dE/dx (nucl)\n");
+	fprintf(fout, "#   [MeV/u]         [mg/cm2]     [MeV/(mg/cm2)]  [MeV/(mg/cm2)]\n");
+	fprintf(fout, "# ------------------------------------------------------------\n");
+	for(unsigned j=0; j<vE.size(); j++) {
+		fprintf(fout, "   %.4le      %.4le      %.4le      %.4le\n", vE[j], vR[j], vDe[j], vDn[j]);
+	}
+	fclose(fout);
+	return 1;
+}
+
+void ELoss::UpdateTables(bool over /*= false*/) {
+	char filename[STRMAXL];
+	struct dirent *ent;
+	int ret, Nskip = 0, Nfail = 0, Nsucc = 0;
+	
+	DIR *dir = opendir(NISTFOLD);
+	if(dir == NULL) {
+		perror(YEL "opendir " NRM);
+		goto srim;
+	}
+	while((ent = readdir(dir)) != NULL) {
+		if(ent->d_type != DT_REG) continue;
+		sprintf(filename, NISTFOLD "/%s", ent->d_name);
+		ret = NistTab(filename, over);
+		if(ret < 0) Nfail++;
+		else if(ret == 0) Nskip++;
+		else Nsucc++;
+	}
+	free(dir);
+	
+	srim:
+	dir = opendir(SRIMFOLD);
+	if(dir == NULL) {
+		perror(RED "opendir " NRM);
+		return;
+	}
+	while((ent = readdir(dir)) != NULL) {
+		if(ent->d_type != DT_REG) continue;
+		sprintf(filename, SRIMFOLD "/%s", ent->d_name);
+		ret = SrimTab(filename, over);
+		if(ret < 0) Nfail++;
+		else if(ret == 0) Nskip++;
+		else Nsucc++;
+	}
+	free(dir);
+	printf("\n");
+	printf(BLU "UpdateTb" NRM " Files parsed: %4d\n", Nfail + Nskip + Nsucc);
+	printf("              success: " GRN "%4d\n" NRM, Nsucc);
+	printf("              skipped: %4d\n", Nskip);
+	printf("               failed: " RED "%4d\n" NRM, Nfail);
+	printf("\n");
+	return;
 }
 
 //Energy loss core function (except for vedaloss!)
@@ -809,34 +992,10 @@ double ELoss::Core(const int opt, const int Zp, const struct material &mat, cons
 	}
 	
 	int tidx = -1;
-	switch(form) {
-		case 0: case 1:
-			tidx = TbNist(Zp, mat);
-			if(tidx >= 0) {
-				printf(BLD "ELCore  " NRM " NIST energy loss table selected!\n");
-				break;
-			}
-			if(form) break;
-			[[gnu::fallthrough]];
-		case 2:
-			tidx = TbBarb(Zp, mat);
-			if(tidx >= 0) {
-				printf(BLD "ELCore  " NRM " Barbui energy loss table selected!\n");
-				break;
-			}
-			if(form) break;
-			[[gnu::fallthrough]];
-		case 3:
-			tidx = TbSrim(Zp, mat);
-			if(tidx >= 0) {
-				printf(BLD "ELCore  " NRM " SRIM energy loss table selected!\n");
-				break;
-			}
-			if(form) break;
-			[[gnu::fallthrough]];
-		case 4:
-			tidx = TbSchw(Zp, mat);
-			if(tidx >= 0) printf(BLD "ELCore  " NRM " Schwalm energy loss formula selected!\n");
+	for(int j = 1; j < 5; j++) {
+		if((form != 0) && (form != j)) continue;
+		tidx = Tab(j, Zp, mat);
+		if(tidx >= 0) break;
 	}
 	if(tidx < 0) {
 		printf(RED "ELCore  " NRM " No valid energy loss formula exists for Z = %d in %s\n", Zp, mat.Name.c_str());
@@ -898,6 +1057,10 @@ double ELoss::ERes(const int Zp, const int Ap, const int mid, const int form, co
 		float apart = (float)Ap;
 		float spess = (float)thickness;
 		int idir = 1, icod;
+		if(!vedaDB) {
+			vedaDB = true;
+			vedaloss_();
+		}
 		ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &el1, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
 		out = (double)e1;
 	}
@@ -929,6 +1092,10 @@ double ELoss::ELost(const int Zp, const int Ap, const int mid, const int form, c
 		float apart = (float)Ap;
 		float spess = (float)thickness;
 		int idir = 1, icod;
+		if(!vedaDB) {
+			vedaDB = true;
+			vedaloss_();
+		}
 		ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &el1, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
 		out = (double)el1;
 	}
@@ -957,6 +1124,10 @@ double ELoss::EIn_res(const int Zp, const int Ap, const int mid, const int form,
 		float apart = (float)Ap;
 		float spess = (float)thickness;
 		int idir = 2, icod;
+		if(!vedaDB) {
+			vedaDB = true;
+			vedaloss_();
+		}
 		ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &ei, &el1, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
 		out = (double)ei;
 	}
@@ -1017,6 +1188,10 @@ double ELoss::EIn_lost(const int Zp, const int Ap, const int mid, const int form
 		float zpart = (float)Zp;
 		float apart = (float)Ap;
 		float spess = (float)thickness;
+		if(!vedaDB) {
+			vedaDB = true;
+			vedaloss_();
+		}
 		de_vedaloss_(&zpart, &apart, &(mateLS[jm].Atloc), &de, &spess, &epart, &(mateLS[jm].Absorber), &(mateLS[jm].Pression));
 		out = (double)epart;
 	}
@@ -1046,6 +1221,10 @@ double ELoss::PunchThrough(const int Zp, const int Ap, const int mid, const int 
 		float apart = (float)Ap;
 		float spess = (float)thickness;
 		int idir = 1, icod, n;
+		if(!vedaDB) {
+			vedaDB = true;
+			vedaloss_();
+		}
 		do {
 			epart1 *= 0.9;
 			ecorr_veda_(&epart1, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &dummy, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
@@ -1095,6 +1274,10 @@ double ELoss::Range(const int Zp, const int Ap, const int mid, const int form, c
 		float apart = (float)Ap;
 		float spess1 = (float)rng, spess2 = (float)rng, spessx;
 		int idir = 1, icod, n;
+		if(!vedaDB) {
+			vedaDB = true;
+			vedaloss_();
+		}
 		do {
 			spess1 *= 0.9;
 			ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &dummy, &(mateLS[jm].Absorber), &spess1, &idir, &icod, &(mateLS[jm].Pression));
@@ -1144,6 +1327,10 @@ double ELoss::Thickness(const int Zp, const int Ap, const int mid, const int for
 		float apart = (float)Ap;
 		float spess1 = (float)rng, spess2 = (float)rng, spessx;
 		int idir = 1, icod, n;
+		if(!vedaDB) {
+			vedaDB = true;
+			vedaloss_();
+		}
 		do {
 			spess1 *= 0.9;
 			ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &dummy, &(mateLS[jm].Absorber), &spess1, &idir, &icod, &(mateLS[jm].Pression));

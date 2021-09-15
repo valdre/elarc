@@ -1,6 +1,6 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 25/08/2021                          *
+*                         Simone Valdre' - 15/09/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
 *******************************************************************************/ 
@@ -13,12 +13,15 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <sys/types.h>
+#include <dirent.h>
+#include <unistd.h>
 #include "ShellColors.h"
 #include "Spline.h"
 
 #define STRMAXL 1000
 
-#define EMIN       0.01
+#define EMIN       0.001
 #define EMAX    1000
 #define PREC       0.0001
 
@@ -31,6 +34,10 @@
 #define SRIM       3
 #define SCHWALM    4
 #define VEDALOSS   5
+
+#define NISTFOLD "db/tb-nist-output"
+#define SRIMFOLD "db/tb-srim-output"
+#define TABLFOLD "db/tb-range-and-dedx"
 
 extern "C" {
 	void ecorr_veda_(float *eingresso,float *zpr,float *apr,float *atar, float *eout,float *elost,int *mate,float *thick,int *idir, int *icod, float *pressione);
@@ -67,7 +74,7 @@ struct material {
 struct table {
 	//one table for each projectile Z, material and energy loss formula (except vedaloss)
 	int z, mid, form;
-	double emin, emax;
+	double emax;
 	tk::spline range; //range table (integral of 1/(dE/dx) in funcion of E/A)
 	tk::spline energy;  //energy table (E/A in function of the integral of 1/(dE/dx))
 	tk::spline dedx_e, dedx_n; //electronic and nuclear dE/dx in function of E/A
@@ -80,11 +87,15 @@ public:
 	ELoss();
 	~ELoss();
 	
+	//AddAbsorber performs SetAbsorber, then it adds the struct material to the mateLS list.
 	int AddAbsorber(const char *name /*name or formula*/, const double rho = -1 /*density in mg/cm^3*/, const double P = -1 /*pressure in mbar, ignored if not a gas*/, const double T = -1 /*temperature in K, ignored if not a gas*/);
+	int SetAbsorber(struct material &Abs, const char *name /*name or formula*/, const double rho = -1 /*density in mg/cm^3*/, const double P = -1 /*pressure in mbar, ignored if not a gas*/, const double T = -1 /*temperature in K, ignored if not a gas*/);
 	int ParseFormula(const char *form, std::vector< int > &Z, std::vector< int > &W, std::vector< double > &A);
 	int GetAbsParam(const int mid, bool &isgas, double &rho, double &P, double &T);
 	int SetAbsParam(const int mid, const bool isgas, const double rho = -1, const double P = -1, const double T = -1);
-
+	
+	void UpdateTables(bool over = false);
+	
 	double ERes(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thickness /*in um*/);
 	double ELost(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thickness /*in um*/);
 	double EIn_res(const int Zp, const int Ap, const int mid, const int form, const double eres /*in MeV*/, const double thickness /*in um*/);
@@ -92,6 +103,8 @@ public:
 	double PunchThrough(const int Zp, const int Ap, const int mid, const int form, const double thickness /*in um*/);
 	double Range(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/);
 	double Thickness(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double eres /*in MeV*/);
+	
+	void Integral(const std::vector< double > &vE, std::vector< double > &vR);
 	
 	static inline double MeV_to_AMeV(double MeV,   double A)   {return MeV/A;};
 	static inline double AMeV_to_MeV(double AMeV,  double A)   {return AMeV*A;};
@@ -115,15 +128,16 @@ private:
 	// *************** Energy loss
 	double Schwalm(const int Zp, double E, const struct material &mat);
 	double Nuclear(const int Zp, const double E, const struct material &mat);
-	void Integral(const std::vector< double > &vE, std::vector< double > &vR);
 	
-	int TbNist(const int Zp, const struct material &mat);
-	int TbSrim(const int Zp, const struct material &mat);
-	int TbBarb(const int Zp, const struct material &mat);
-	int TbSchw(const int Zp, const struct material &mat);
+	int Tab(const int form, const int Zp, const struct material &mat);
+	int BarbTab(const int Zp, const struct material &mat);
+	int SchwTab(const int Zp, const struct material &mat);
+	int NistTab(const char *fn, bool over = false);
+	int SrimTab(const char *fn, bool over = false);
 	double Core(const int opt, const int Zp, const struct material &mat, const int form, double in1, double in2 = -1);
 	
 	std::vector< struct table > tables;
+	bool vedaDB;
 };
 
 #endif
