@@ -18,13 +18,11 @@
 #include <TVirtualX.h>
 #include <TApplication.h>
 #include <TROOT.h>
+#include <sys/time.h>
 #include "ELoss.h"
 
 #define WINDOWX 600
 #define WINDOWY 800
-
-#define MODES 6
-#define FORMULAS 5
 
 class TGWindow;
 class TGMainFrame;

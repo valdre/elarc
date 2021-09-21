@@ -1,6 +1,6 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 15/09/2021                          *
+*                         Simone Valdre' - 21/09/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
 *******************************************************************************/ 
@@ -22,28 +22,34 @@
 #define STRMAXL 1000
 
 #define EMIN       0.001
-#define EMAX    1000
-#define PREC       0.0001
+#define EMINVEDA   0.1
+#define DECAMAX    3
 
-#define EZERO      0.001
 #define ITER     100
+#define PREC       0.0005
 
 //Energy loss formulas
+#define NFORMULAS  5
+// 0 means AUTO
 #define NIST       1
 #define BARBUI     2
 #define SRIM       3
 #define SCHWALM    4
 #define VEDALOSS   5
 
+//Computing modes
+#define NMODES          6
+#define EIN_THK_TO_ERES 0
+#define ERES_THK_TO_EIN 1
+#define ELST_THK_TO_EIN 2
+#define EIN_ERES_TO_THK 3
+#define THK_TO_EPT      4
+#define EPT_TO_THK      5
+
 #define NISTFOLD "db/tb-nist-output"
 #define SRIMFOLD "db/tb-srim-output"
+#define VEDAFOLD "db/tb-vedaloss-coeff"
 #define TABLFOLD "db/tb-range-and-dedx"
-
-extern "C" {
-	void ecorr_veda_(float *eingresso,float *zpr,float *apr,float *atar, float *eout,float *elost,int *mate,float *thick,int *idir, int *icod, float *pressione);
-	void de_vedaloss_(float *zpr,float *apr,float *atar,float *de,float *thick,float *e,int *mate,float *pressione);
-	void vedaloss_();
-}
 
 struct element {
 	std::string Name;
@@ -66,9 +72,6 @@ struct material {
 	double rho;
 	//gas data (ignored for solids and liquids): pression and temperature
 	double P, T;
-	//vedaloss variables
-	int Absorber;
-	float Atloc, Pression;
 };
 
 struct table {
@@ -96,15 +99,32 @@ public:
 	
 	void UpdateTables(bool over = false);
 	
-	double ERes(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thickness /*in um*/);
-	double ELost(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thickness /*in um*/);
-	double EIn_res(const int Zp, const int Ap, const int mid, const int form, const double eres /*in MeV*/, const double thickness /*in um*/);
-	double EIn_lost(const int Zp, const int Ap, const int mid, const int form, const double elost /*in MeV*/, const double thickness /*in um*/);
-	double PunchThrough(const int Zp, const int Ap, const int mid, const int form, const double thickness /*in um*/);
-	double Range(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/);
-	double Thickness(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double eres /*in MeV*/);
+	double Compute(const int mode, const int Zp, const int Ap, const int mid, const int form, double in1, double in2 = -1);
 	
-	void Integral(const std::vector< double > &vE, std::vector< double > &vR);
+	//Legacy functions
+	double ERes(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thk /*in um*/) {
+		return Compute(EIN_THK_TO_ERES, Zp, Ap, mid, form, ein, thk);
+	}
+	double ELost(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thk /*in um*/) {
+		double eres = Compute(EIN_THK_TO_ERES, Zp, Ap, mid, form, ein, thk);
+		if((eres < 0) || (eres > ein)) return -1;
+		return ein - eres;
+	}
+	double EIn_res(const int Zp, const int Ap, const int mid, const int form, const double eres /*in MeV*/, const double thk /*in um*/) {
+		return Compute(ERES_THK_TO_EIN, Zp, Ap, mid, form, eres, thk);
+	}
+	double EIn_lost(const int Zp, const int Ap, const int mid, const int form, const double elst /*in MeV*/, const double thk /*in um*/) {
+		return Compute(ELST_THK_TO_EIN, Zp, Ap, mid, form, elst, thk);
+	}
+	double Thickness(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double eres /*in MeV*/) {
+		return Compute(EIN_ERES_TO_THK, Zp, Ap, mid, form, ein, eres);
+	}
+	double Range(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/) {
+		return Compute(EPT_TO_THK, Zp, Ap, mid, form, ein);
+	}
+	double PunchThrough(const int Zp, const int Ap, const int mid, const int form, const double thk /*in um*/) {
+		return Compute(THK_TO_EPT, Zp, Ap, mid, form, thk);
+	}
 	
 	static inline double MeV_to_AMeV(double MeV,   double A)   {return MeV/A;};
 	static inline double AMeV_to_MeV(double AMeV,  double A)   {return AMeV*A;};
@@ -120,7 +140,6 @@ private:
 	std::vector< struct compound > compDB;
 	
 	// *************** Materials
-	void SetVedaParam(const char *form, struct material &Abs);
 	int Mcnt;
 	std::vector< struct material > mateLS;
 	std::vector< int > mateID;
@@ -128,16 +147,20 @@ private:
 	// *************** Energy loss
 	double Schwalm(const int Zp, double E, const struct material &mat);
 	double Nuclear(const int Zp, const double E, const struct material &mat);
+	double Vedapoli(const double le, const double *p);
+	double Vedaloss(const double E, const double *p);
+	
+	void Integral(const std::vector< double > &vE, std::vector< double > &vR);
+	void Derivate(const std::vector< double > &vE, const std::vector< double > &vR, std::vector< double > &vDe);
 	
 	int Tab(const int form, const int Zp, const struct material &mat);
 	int BarbTab(const int Zp, const struct material &mat);
 	int SchwTab(const int Zp, const struct material &mat);
+	int VedaTab(const int Zp, const struct material &mat);
 	int NistTab(const char *fn, bool over = false);
 	int SrimTab(const char *fn, bool over = false);
-	double Core(const int opt, const int Zp, const struct material &mat, const int form, double in1, double in2 = -1);
 	
 	std::vector< struct table > tables;
-	bool vedaDB;
 };
 
 #endif

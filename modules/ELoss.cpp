@@ -1,6 +1,6 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 15/09/2021                          *
+*                         Simone Valdre' - 21/09/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
 *******************************************************************************/
@@ -21,16 +21,13 @@ ELoss::ELoss() {
 	tables.clear();
 	
 	LoadDB();
-	vedaDB = false;
 }
 
 ELoss::~ELoss() {
 	
 }
 
-
 // *************** DB funcions
-
 void ELoss::LoadDB() {
 	std::vector< std::vector< std::string > > arg;
 	
@@ -248,8 +245,6 @@ int ELoss::SetAbsorber(struct material &Abs, const char *name, const double rho,
 		Abs.P = -1;
 		Abs.T = -1;
 	}
-	
-	SetVedaParam(form, Abs);
 	Abs.mid = -1;
 	return 0;
 }
@@ -332,36 +327,6 @@ int ELoss::ParseFormula(const char *form, std::vector< int > &Z, std::vector< in
 	return 0;
 }
 
-void ELoss::SetVedaParam(const char *form, struct material &Abs) {
-	//Vedaloss absorbers
-	const char nmat[29][10] = {
-		"Si",  "C10H8O4", "CH2", "Ni", "C3F8", "C",   "Ag",    "Sn", "CsI", "Au",
-		"U",   "air",     "Nb",  "Ta", "V",    "CF4", "C4H10", "Al", "Pb",  "PbS",
-		"KCl", "Ge",      "Ca",  "Cu", "Ti",   "Bi",  "Mg",    "Li", "Zn"
-	};
-	
-	//Trim the mass number for the first element
-	int istart=0;
-	for(; chartype(form[istart]) == 0; istart++);
-	
-	for(Abs.Absorber = 0; Abs.Absorber < 29; Abs.Absorber++) {
-		if(strcmp(form + istart, nmat[Abs.Absorber])==0) break;
-	}
-	if(Abs.Absorber == 29) Abs.Absorber = 10;
-	else Abs.Absorber++;
-	
-	Abs.Pression = 0;
-	Abs.Atloc = (float)(Abs.A[0]); //ok il primo elemento, tanto per i composti Atloc=0!
-	switch(Abs.Absorber) {
-		case 5: case 12: case 16: case 17:
-			Abs.Pression = (float)(Abs.P);
-			[[gnu::fallthrough]]; //niente break!! Anche in questi casi Atloc=0!
-		case 2: case 3: case 9: case 20: case 21:
-			Abs.Atloc = 0;
-	}
-	return;
-}
-
 int ELoss::GetAbsParam(const int mid, bool &isgas, double &rho, double &P, double &T) {
 	if((mid < 0) || (mid >= (int)(mateID.size()))) {
 		printf(RED "GetParam" NRM " bad material ID\n");
@@ -381,12 +346,12 @@ int ELoss::GetAbsParam(const int mid, bool &isgas, double &rho, double &P, doubl
 
 int ELoss::SetAbsParam(const int mid, const bool isgas, const double rho, const double P, const double T) {
 	if((mid < 0) || (mid >= (int)(mateID.size()))) {
-		printf(RED "GetParam" NRM " bad material ID\n");
+		printf(RED "SetParam" NRM " bad material ID\n");
 		return -1.;
 	}
 	int jm = mateID[mid];
 	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
-		printf(RED "GetParam" NRM " bad material index\n");
+		printf(RED "SetParam" NRM " bad material index\n");
 		return -1.;
 	}
 	
@@ -405,7 +370,6 @@ int ELoss::SetAbsParam(const int mid, const bool isgas, const double rho, const 
 	
 	char form[STRMAXL];
 	strcpy(form, Abs.Form.c_str());
-	SetVedaParam(form, Abs);
 	return 0;
 }
 
@@ -468,15 +432,42 @@ double ELoss::Nuclear(const int Zp, const double E, const struct material &mat) 
 	return dEdx / wtot;
 }
 
+//Vedaloss polinomial series
+double ELoss::Vedapoli(const double le, const double *p) {
+	double poli = 1.;
+	double ran  = p[0];
+	for(unsigned j = 1; j < 6; j++) {
+		poli *= le;
+		ran += p[j] * poli;
+	}
+	return ran;
+}
+
+//Vedaloss formula for projected range
+double ELoss::Vedaloss(const double E, const double *p) {
+	if(E < EMIN) return 0;
+	double le = log(E);
+	if(E < EMINVEDA) {
+		double x1 = log(EMINVEDA);
+		double x2 = log(2. * EMINVEDA);
+		double y1 = Vedapoli(x1, p);
+		double y2 = Vedapoli(x2, p);
+		double adm = (y2 - y1) / (x2 - x1);
+		double adn = (y1 - adm * x1);
+		return exp(adm * le + adn) / p[12];
+	}
+	return exp(Vedapoli(le, p)) / p[12];
+}
+
 //table integration to obtain the desired range table
 void ELoss::Integral(const std::vector< double > &vE, std::vector< double > &vR) {
 	long double buff = 0, intg = 0;
 	double e1, r1, e2, r2;
 	
 	if(vE.size() == 0) return;
-	e1  = 0;
+	e1 = 0;
 	r1 = vR[0];
-	vR[0] = 0;
+	vR[0] = vE[0] * vR[0];
 	for(unsigned j = 1; j < vE.size(); j++) {
 		e2  = vE[j];
 		r2  = vR[j];
@@ -494,13 +485,45 @@ void ELoss::Integral(const std::vector< double > &vE, std::vector< double > &vR)
 	return;
 }
 
+void ELoss::Derivate(const std::vector< double > &vE, const std::vector< double > &vR, std::vector< double > &vDe) {
+	double e1, r1, e2, r2;
+	long double ds1, ds2;
+	
+	unsigned ji = 0;
+	vDe.resize(vE.size());
+	if(vE.size() < 2) return;
+	if(vE[0] == 0) {
+		ji = 1;
+		e1 = vE[1]; r1 = vR[1];
+		ds1 = ((long double)r1) / ((long double)e1);
+		vDe[0] = 0;
+	}
+	else {
+		e1 = vE[0]; r1 = vR[0];
+		ds1 = ((long double)r1) / ((long double)e1);
+	}
+	for(unsigned j = ji; j < vE.size() - 1; j++) {
+		e2 = vE[j+1];
+		r2 = vR[j+1];
+		ds2 = ((long double)(r2 - r1)) / ((long double)(e2 - e1));
+		
+		vDe[j] = (double)(2. / (ds1 + ds2));
+		
+		e1 = e2;
+		r1 = r2;
+		ds1 = ds2;
+	}
+	vDe[vE.size() - 1] = (double)(1. / ds1);
+	return;
+}
+
 //generate range table from input files
 // first column  ->  energy per nucleon
 //second column  ->  range per nucleon
 // third column  ->  electronic dE/dx
 //fourth column  ->     nuclear dE/dx
 int ELoss::Tab(const int form, const int Zp, const struct material &mat) {
-	const char flabel[4][8] = {"nist", "barbui", "srim", "schwalm"};
+	const char flabel[5][9] = {"nist", "barbui", "srim", "schwalm", "vedaloss"};
 	//First search for existing table
 	unsigned j;
 	for(j = 0; j < tables.size(); j++) {
@@ -525,9 +548,13 @@ int ELoss::Tab(const int form, const int Zp, const struct material &mat) {
 		SchwTab(Zp, mat);
 		f = fopen(fn, "r");
 	}
+	if((f == NULL) && (form == VEDALOSS)) {
+		VedaTab(Zp, mat);
+		f = fopen(fn, "r");
+	}
 	
 	if(f == NULL) {
-		printf(UP YEL "Tab     " NRM " %s not found                   \n", fn);
+		printf(YEL "Tab     " NRM " %s not found                   \n", fn);
 		return -1;
 	}
 	
@@ -546,7 +573,7 @@ int ELoss::Tab(const int form, const int Zp, const struct material &mat) {
 	fclose(f);
 	
 	if(vE.size() == 0) {
-		printf(UP YEL "Tab     " NRM " table creation failed                  \n");
+		printf(YEL "Tab     " NRM " table creation failed                  \n");
 		return -1;
 	}
 	
@@ -575,7 +602,7 @@ int ELoss::BarbTab(const int Zp, const struct material &mat) {
 	printf(BLD "BarbTab " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
 	sprintf(fn, "%s/srim_1_%s.tab", TABLFOLD, mat.Form.c_str());
 	if((f = fopen(fn, "r")) == NULL) {
-		printf(UP YEL "TbBarb  " NRM " %s not found\n", fn);
+		printf(UP YEL "BarbTab " NRM " %s not found\n", fn);
 		return -1;
 	}
 	
@@ -608,6 +635,7 @@ int ELoss::BarbTab(const int Zp, const struct material &mat) {
 	double e, dd1, dd2, ec;
 	std::vector< double > vE, vR, vDe, vDn;
 	vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
+	
 	char row[STRMAXL];
 	for(;;) {
 		if(fgets(row, STRMAXL, f) == NULL) break;
@@ -659,49 +687,27 @@ int ELoss::BarbTab(const int Zp, const struct material &mat) {
 
 //generate range table from Braune-Schwalm formula
 int ELoss::SchwTab(const int Zp, const struct material &mat) {
+	const double dec[26] = {1.000, 1.125, 1.250, 1.375, 1.500, 1.625, 1.750, 1.875, 2.000, 2.250, 2.500, 2.750, 3.000, 3.250, 3.500, 3.750, 4.000, 4.500, 5.000, 5.500, 6.000, 6.500, 7.000, 7.500, 8.000, 9.000};
 	printf(BLD "SchwTab " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
 	
-	double e, dd1, dd2, e1, y1, e2, y2, ec, yc;
+	double e, dd1, dd2;
 	std::vector< double > vE, vR, vDe, vDn;
-	vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);			//j = 0
+	const double dmin = round(log10((double)EMIN));
+	const double dmax = round((double)DECAMAX);
 	
-	const double emin = (double)EMIN;
-	const double emax = (double)EMAX;
-	
-	dd1 = Schwalm(Zp, emin, mat); dd2 = Nuclear(Zp, emin, mat);
-	vE.push_back(emin); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));			//j = 1
-	
-	ec  = (emax + emin) / 2.; dd1 = Schwalm(Zp, ec, mat); dd2 = Nuclear(Zp, ec, mat);
-	vE.push_back(ec); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));			//j = 2
-	
-	dd1 = Schwalm(Zp, emax, mat); dd2 = Nuclear(Zp, emax, mat);
-	vE.push_back(emax); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));			//j = 3
-	
-	int pos;
-	for(unsigned j = 1; j + 2 < vE.size(); j++) {
-		e1 = vE[j];     y1 = vR[j];
-		ec = vE[j + 1]; yc = vR[j + 1];
-		e2 = vE[j + 2]; y2 = vR[j + 2];
-		for(; fabs(yc - y1 - (ec - e1) * (y2 - y1) / (e2 - e1)) > PREC;) {
-			if(ec - e1 < e2 - ec) pos = 1;
-			else pos = 0;
-			e = pos ? ((ec + e2)/2.) : ((ec + e1)/2.);
+	vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
+	for(double dex = dmin; dex < dmax; dex += 1) {
+		double emag = pow(10., dex);
+		for(int j = 0; j < 26; j++) {
+			e = dec[j] * emag;
 			dd1 = Schwalm(Zp, e, mat); dd2 = Nuclear(Zp, e, mat);
-			
-			if(pos) {
-				vE.insert(vE.begin() + j + 2, e); vDe.insert(vDe.begin() + j + 2, dd1); vDn.insert(vDn.begin() + j + 2, dd2);
-				vR.insert(vR.begin() + j + 2, 1. / (dd1 + dd2));
-			}
-			else {
-				vE.insert(vE.begin() + j + 1, e); vDe.insert(vDe.begin() + j + 1, dd1); vDn.insert(vDn.begin() + j + 1, dd2);
-				vR.insert(vR.begin() + j + 1, 1. / (dd1 + dd2));
-				ec = vE[j + 1]; yc = vR[j + 1];
-			}
-			e2 = vE[j + 2]; y2 = vR[j + 2];
+			if(dd1 < 0) dd1 = 1.e-6;
+			if(dd2 < 0) dd2 = 1.e-6;
+			vE.push_back(e); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(1. / (dd1 + dd2));
 		}
 	}
 	if(vE.size() == 0) {
-		printf(UP YEL "TbSchw  " NRM " table creation failed\n");
+		printf(UP YEL "SchwTab " NRM " table creation failed\n");
 		return -1;
 	}
 	Integral(vE, vR);
@@ -717,6 +723,78 @@ int ELoss::SchwTab(const int Zp, const struct material &mat) {
 	}
 	fclose(fout);
 	
+	return 1;
+}
+
+//generate range table from Vedaloss coefficients
+int ELoss::VedaTab(const int Zp, const struct material &mat) {
+	char fn[STRMAXL];
+	FILE *f;
+	printf(BLD "VedaTab " NRM " Table creation for Z =%3d in %s\n", Zp, mat.Form.c_str());
+	
+	sprintf(fn, "%s/%s.coe", VEDAFOLD, mat.Form.c_str());
+	if((f = fopen(fn, "r")) == NULL) {
+		printf(UP YEL "VedaTab " NRM " %s not found\n", fn);
+		return -1;
+	}
+	
+	double p[13];
+	int ret, ztab;
+	bool ok = false;
+	char row[STRMAXL];
+	for(;;) {
+		if(fgets(row, STRMAXL, f) == NULL) break;
+		ret = sscanf(row, " %d %lg %lg %lg %lg %lg %lg %lg %lg %lg %lg %lg %lg %lg ", &ztab, p+12, p, p+1, p+2, p+3, p+4, p+5, p+6, p+7, p+8, p+9, p+10, p+11);
+		if(ret != 14) continue;
+		if(ztab > Zp) break;
+		if(ztab == Zp) {
+			ok = true;
+			break;
+		}
+	}
+	fclose(f);
+	if(!ok) {
+		printf(UP YEL "VedaTab " NRM " Z = %d not found\n", Zp);
+		return -1;
+	}
+	
+	const double dec[26] = {1.000, 1.125, 1.250, 1.375, 1.500, 1.625, 1.750, 1.875, 2.000, 2.250, 2.500, 2.750, 3.000, 3.250, 3.500, 3.750, 4.000, 4.500, 5.000, 5.500, 6.000, 6.500, 7.000, 7.500, 8.000, 9.000};
+	
+	double e;
+	std::vector< double > vE, vR, vDe, vDn;
+	const double dmin = round(log10((double)EMIN));
+	const double dmax = round((double)DECAMAX);
+	
+	vE.push_back(0); vR.push_back(0);
+	for(double dex = dmin; dex < dmax; dex += 1) {
+		double emag = pow(10., dex);
+		for(int j = 0; j < 26; j++) {
+			e = dec[j] * emag;
+			vE.push_back(e); vR.push_back(Vedaloss(e, p));
+		}
+	}
+	if(vE.size() == 0) {
+		printf(UP YEL "VedaTab " NRM " table creation failed\n");
+		return -1;
+	}
+	Derivate(vE, vR, vDe);
+	vDn.resize(vDe.size());
+	
+	char name[STRMAXL];
+	sprintf(name, "%s/vedaloss_%d_%s.tab", TABLFOLD, Zp, mat.Form.c_str());
+	FILE *fout = fopen(name, "w");
+	fprintf(fout, "#    Energy           Range       dE/dx (elec)    dE/dx (nucl)\n");
+	fprintf(fout, "#   [MeV/u]         [mg/cm2]     [MeV/(mg/cm2)]  [MeV/(mg/cm2)]\n");
+	fprintf(fout, "# ------------------------------------------------------------\n");
+	for(unsigned j = 0; j < vE.size(); j++) {
+		if(vE[j] < EMIN) vDn[j] = 0;
+		else {
+			vDn[j] = Nuclear(Zp, vE[j], mat);
+			if(vDe[j] > vDn[j]) vDe[j] -= vDn[j];
+		}
+		fprintf(fout, "   %.4le      %.4le      %.4le      %.4le\n", vE[j], vR[j], vDe[j], vDn[j]);
+	}
+	fclose(fout);
 	return 1;
 }
 
@@ -782,9 +860,9 @@ int ELoss::NistTab(const char *fn, bool over /*= false*/) {
 	printf(BLD "NistTab " NRM " Table creation for Z =%3d in %s\n", z, Abs.Form.c_str());
 	double e, dd1, dd2, rng;
 	std::vector< double > vE, vR, vDe, vDn;
+	vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
 	
 	char row[STRMAXL];
-	vE.push_back(0); vDe.push_back(0); vDn.push_back(0); vR.push_back(0);
 	for(;;) {
 		if(fgets(row, STRMAXL, f) == NULL) break;
 		ret = sscanf(row, " %lg %lg %lg %lg ", &e, &dd1, &dd2, &rng);
@@ -966,396 +1044,135 @@ void ELoss::UpdateTables(bool over /*= false*/) {
 	return;
 }
 
-//Energy loss core function (except for vedaloss!)
-//                    IN1               IN2              RETURN VALUE
-// opt = 0  =>   initial energy      thickness         residual energy
-// opt = 1  =>  residual energy      thickness          initial energy
-// opt = 2  =>   initial energy          -              maximum range
-// opt = 3  =>     thickness             -           punch-through energy
-// opt = 4  =>   initial energy   residual energy         thickness
-double ELoss::Core(const int opt, const int Zp, const struct material &mat, const int form, double in1, double in2) {
-	if(opt < 0 || opt > 4) {
-		printf(RED "ELCore  " NRM "Invalid option (%d)\n", opt);
+//Energy loss core function
+//                        IN1              IN2              RETURN VALUE
+// mode = 0  =>     initial energy      thickness         residual energy
+// mode = 1  =>    residual energy      thickness          initial energy
+// mode = 2  =>      lost energy        thickness          initial energy
+// mode = 3  =>     initial energy   residual energy         thickness
+// mode = 4  =>       thickness             -           punch-through energy
+// mode = 5  => punch-through energy        -                thickness
+double ELoss::Compute(const int mode, const int Zp, const int Ap, const int mid, const int form, double in1, double in2 /*= -1*/) {
+	if(mode < 0 || mode >= NMODES) {
+		printf(RED "Compute " NRM " Invalid mode (%d)\n", mode);
 		return -1.;
 	}
 	if(Zp <= 0 || Zp > 118) {
-		printf(RED "ELCore  " NRM "Projectile Z out of range [1:118] (%d)\n", Zp);
+		printf(RED "Compute " NRM " Projectile Z out of range [1:118] (%d)\n", Zp);
 		return -1.;
 	}
+	if(Ap <= 0 || Ap > 300) {
+		printf(RED "Compute " NRM " Projectile A out of range [1:300] (%d)\n", Ap);
+		return -1.;
+	}
+	
+	in1 /= (double)Ap;
+	if(mode < 4) in2 /= (double)Ap;
+	
 	if(in1 < 0) {
-		printf(RED "ELCore  " NRM "Not admitted negative value for input 1 (%f)\n", in1);
+		printf(RED "Compute " NRM " Negative value for input 1 not admitted (%f)\n", in1);
 		return -1.;
 	}
-	if((opt == 0 || opt == 1 || opt == 4) && (in2 < 0)) {
-		printf(RED "ELCore  " NRM "Not admitted negative value for input 2 (%f)\n", in2);
+	if((mode < 4) && (in2 < 0)) {
+		printf(RED "Compute " NRM " Negative value for input 2 not admitted (%f)\n", in2);
+		return -1.;
+	}
+	if((mid < 0) || (mid >= (int)(mateID.size()))) {
+		printf(RED "Compute " NRM " Bad material ID\n");
+		return -1.;
+	}
+	int jm = mateID[mid];
+	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
+		printf(RED "Compute " NRM " Bad material index\n");
 		return -1.;
 	}
 	
 	int tidx = -1;
-	for(int j = 1; j < 5; j++) {
+	for(int j = 1; j <= NFORMULAS; j++) {
 		if((form != 0) && (form != j)) continue;
-		tidx = Tab(j, Zp, mat);
+		tidx = Tab(j, Zp, mateLS[jm]);
 		if(tidx >= 0) break;
 	}
 	if(tidx < 0) {
-		printf(RED "ELCore  " NRM " No valid energy loss formula exists for Z = %d in %s\n", Zp, mat.Name.c_str());
+		printf(RED "Compute " NRM " No valid energy loss formula exists for Z = %d in %s\n", Zp, mateLS[jm].Name.c_str());
 		return -1.;
 	}
 	
-	//CASE 3
-	if(opt == 3) {
+	//MODE 2 is peculiar: I need to perform an iterative calculation
+	if(mode == ELST_THK_TO_EIN) {
+		const double thk = um_to_mgcm2(in2, mateLS[jm].rho);
+		const double ept = tables[tidx].energy(thk);
+		if(fabs(in1 - ept) < 0.5 * EMIN) {
+			return ept * (double)Ap;
+		}
+		if(in1 > ept) {
+			printf(RED "Compute " NRM " input 1 is greater than punch-through energy (%lg MeV/u)!\n", ept);
+			return -1;
+		}
+		double e1 = ept;
+		double e2 = tables[tidx].emax;
+		if(e2 <= e1) {
+			printf(RED "Compute " NRM " energy loss table is too short (check 1)!\n");
+			return -1;
+		}
+		
+		double ex;
+		double rx = tables[tidx].range(e2) - tables[tidx].range(e2 - in1);
+		if(fabs(rx - thk) / thk < PREC) {
+			return e2 * (double)Ap;
+		}
+		if(rx < thk) {
+			printf(RED "Compute " NRM " energy loss table is too short (check 2)!\n");
+			return -1;
+		}
+		
+		int n;
+		for(n = 0; n < ITER; n++) {
+			ex = (e1 + e2) / 2.;
+			rx = tables[tidx].range(ex) - tables[tidx].range(ex - in1);
+			if(fabs(rx - thk) / thk < PREC) {
+				return ex * (double)Ap;
+			}
+			if(rx < thk) e1 = ex;
+			else e2 = ex;
+			if(e2 - e1 < 10. * EMIN) break;
+		}
+		if(n >= ITER) {
+			printf(YEL "Compute " NRM " too many iterations while searching energy!\n");
+		}
+		return 0.5 * (e1 + e2) * (double)Ap;
+	}
+	
+	//MODE 4 is the only one in which in1 is a thickness
+	if(mode == THK_TO_EPT) {
 		//in1 is a thickness with unit um => must be converted to mg/cm^2
-		in1 = um_to_mgcm2(in1, mat.rho);
-		return tables[tidx].energy(in1);
+		return tables[tidx].energy(um_to_mgcm2(in1, mateLS[jm].rho)) * (double)Ap;
 	}
 	
-	//CASE 2
+	//in all the other modes in1 is an energy
 	double range = tables[tidx].range(in1);
-	if(range < 0) return -1;
-	if(opt == 2) {
-		return mgcm2_to_um(range, mat.rho);
+	if(range < 0) return -1.;
+	
+	//MODE 5 is easy: just computing the range is sufficient
+	if(mode == EPT_TO_THK) {
+		return mgcm2_to_um(range, mateLS[jm].rho) * (double)Ap;
 	}
 	
-	//CASE 4
 	double tres;
-	if(opt == 4) {
+	//MODE 3 is the only one in which in2 is an energy
+	if(mode == EIN_ERES_TO_THK) {
 		tres = tables[tidx].range(in2);
-		if(tres < 0) return -1;
-		return mgcm2_to_um(range - tres, mat.rho);
+		if((tres < 0) || (tres > range)) return -1; //QUESTO CONTROLLO ANDREBBE MESSO OVUNQUE!!!
+		return mgcm2_to_um(range - tres, mateLS[jm].rho) * (double)Ap;
 	}
 	
-	//CASES 0 and 1
-	in2 = um_to_mgcm2(in2, mat.rho);
-	if(opt == 0) {
+	//MODES 0 and 1 are very similar and easy
+	in2 = um_to_mgcm2(in2, mateLS[jm].rho);
+	if(mode == EIN_THK_TO_ERES) {
 		if(in2 >= range) return 0;
 		tres = range - in2;
 	}
 	else tres = range + in2;
 	
-	return tables[tidx].energy(tres);
+	return tables[tidx].energy(tres) * (double)Ap;
 }
-
-// *************** USER FUNCTIONS
-// from Ein and thickness to Eres
-double ELoss::ERes(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thickness /*in um*/) {
-	if((mid < 0) || (mid >= (int)(mateID.size()))) {
-		printf(RED "ERes    " NRM " bad material ID\n");
-		return -1.;
-	}
-	int jm = mateID[mid];
-	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
-		printf(RED "ERes    " NRM " bad material index\n");
-		return -1.;
-	}
-	double out;
-	if(form < 5) out = ((double)Ap) * Core(0, Zp, mateLS[jm], form, ein / ((double)Ap), thickness / (double)Ap);
-	else {
-		printf(BLD "ERes    " NRM " vedaloss energy loss table selected!\n");
-		float e1, el1;
-		float epart = (float)ein;
-		float zpart = (float)Zp;
-		float apart = (float)Ap;
-		float spess = (float)thickness;
-		int idir = 1, icod;
-		if(!vedaDB) {
-			vedaDB = true;
-			vedaloss_();
-		}
-		ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &el1, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
-		out = (double)e1;
-	}
-	if(out < 0) return -1;
-	return out;
-}
-
-// from Ein and thickness to Elost
-double ELoss::ELost(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thickness /*in um*/) {
-	if((mid < 0) || (mid >= (int)(mateID.size()))) {
-		printf(RED "ELost   " NRM " bad material ID\n");
-		return -1.;
-	}
-	int jm = mateID[mid];
-	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
-		printf(RED "ELost   " NRM " bad material index\n");
-		return -1.;
-	}
-	double out, eres;
-	if(form < 5) {
-		eres = ((double)Ap) * Core(0, Zp, mateLS[jm], form, ein / ((double)Ap), thickness / (double)Ap);
-		out = (eres <= EZERO) ? ein : ((eres >= ein) ? 0 : (ein - eres));
-	}
-	else {
-		printf(BLD "ELost   " NRM " vedaloss energy loss table selected!\n");
-		float e1, el1;
-		float epart = (float)ein;
-		float zpart = (float)Zp;
-		float apart = (float)Ap;
-		float spess = (float)thickness;
-		int idir = 1, icod;
-		if(!vedaDB) {
-			vedaDB = true;
-			vedaloss_();
-		}
-		ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &el1, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
-		out = (double)el1;
-	}
-	if(out < 0) return -1;
-	return out;
-}
-
-// from thickness and Eres to Ein
-double ELoss::EIn_res(const int Zp, const int Ap, const int mid, const int form, const double eres /*in MeV*/, const double thickness /*in um*/) {
-	if((mid < 0) || (mid >= (int)(mateID.size()))) {
-		printf(RED "Ein_res " NRM " bad material ID\n");
-		return -1.;
-	}
-	int jm = mateID[mid];
-	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
-		printf(RED "Ein_res " NRM " bad material index\n");
-		return -1.;
-	}
-	double out;
-	if(form < 5) out = ((double)Ap) * Core(1, Zp, mateLS[jm], form, eres / ((double)Ap), thickness / (double)Ap);
-	else {
-		printf(BLD "Ein_res " NRM " vedaloss energy loss table selected!\n");
-		float ei, el1;
-		float epart = (float)eres;
-		float zpart = (float)Zp;
-		float apart = (float)Ap;
-		float spess = (float)thickness;
-		int idir = 2, icod;
-		if(!vedaDB) {
-			vedaDB = true;
-			vedaloss_();
-		}
-		ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &ei, &el1, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
-		out = (double)ei;
-	}
-	if(out < 0) return -1;
-	return out;
-}
-
-// from thickness and Elost to Ein
-double ELoss::EIn_lost(const int Zp, const int Ap, const int mid, const int form, const double elost /*in MeV*/, const double thickness /*in um*/) {
-	if((mid < 0) || (mid >= (int)(mateID.size()))) {
-		printf(RED "Ein_lost" NRM " bad material ID\n");
-		return -1.;
-	}
-	int jm = mateID[mid];
-	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
-		printf(RED "Ein_lost" NRM " bad material index\n");
-		return -1.;
-	}
-	double out = -1;
-	if(form<5) {
-		const double ept = ((double)Ap) * Core(3, Zp, mateLS[jm], form, thickness / ((double)Ap));
-		if(elost > ept) {
-			printf(RED "Ein_lost" NRM " input is greater than punch-through energy (%lg MeV)!\n", ept);
-			goto output;
-		}
-		if(elost == ept) {
-			out = ept;
-			goto output;
-		}
-		double e1 = ept, e2 = EMAX, ex;
-		double elx;
-		if(e2 <= e1) {
-			printf(RED "Ein_lost" NRM " energy loss table is too short (check 1)!\n");
-			goto output;
-		}
-		elx = e2 - ((double)Ap) * Core(0, Zp, mateLS[jm], form, e2 / ((double)Ap), thickness / (double)Ap);
-		if(elx >= elost) {
-			printf(RED "Ein_lost" NRM " energy loss table is too short (check 2)!\n");
-			goto output;
-		}
-		int n;
-		for(n = 0; n < ITER; n++) {
-			ex = (e1 + e2) / 2.;
-			elx = ex - ((double)Ap) * Core(0, Zp, mateLS[jm], form, ex / ((double)Ap), thickness / (double)Ap);
-			if(elx < elost) e2 = ex;
-			else e1 = ex;
-			if(fabs(elx - elost) < PREC) break;
-		}
-		if(n >= ITER) {
-			printf(YEL "Ein_lost" NRM " too many iterations while searching energy!\n");
-		}
-		out = (e1 + e2) / 2.;
-	}
-	else {
-		printf(BLD "Ein_lost" NRM " vedaloss energy loss table selected!\n");
-		float epart;
-		float de    = (float)elost;
-		float zpart = (float)Zp;
-		float apart = (float)Ap;
-		float spess = (float)thickness;
-		if(!vedaDB) {
-			vedaDB = true;
-			vedaloss_();
-		}
-		de_vedaloss_(&zpart, &apart, &(mateLS[jm].Atloc), &de, &spess, &epart, &(mateLS[jm].Absorber), &(mateLS[jm].Pression));
-		out = (double)epart;
-	}
-	output:
-	if(out < 0) return -1;
-	return out;
-}
-
-double ELoss::PunchThrough(const int Zp, const int Ap, const int mid, const int form, const double thickness /*in um*/) {
-	if((mid < 0) || (mid >= (int)(mateID.size()))) {
-		printf(RED "P-T     " NRM " bad material ID\n");
-		return -1.;
-	}
-	int jm = mateID[mid];
-	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
-		printf(RED "P-T     " NRM " bad material index\n");
-		return -1.;
-	}
-	double out;
-	if(form < 5) out = ((double)Ap) * Core(3, Zp, mateLS[jm], form, thickness / ((double)Ap));
-	else {
-		const double ept = ((double)Ap) * Core(3, Zp, mateLS[jm], SCHWALM, thickness / ((double)Ap));
-		printf(BLD "P-T     " NRM " vedaloss energy loss table selected!\n");
-		float e1, e2, ex, dummy;
-		float epart1 = (float)ept, epart2 = (float)ept, epartx;
-		float zpart = (float)Zp;
-		float apart = (float)Ap;
-		float spess = (float)thickness;
-		int idir = 1, icod, n;
-		if(!vedaDB) {
-			vedaDB = true;
-			vedaloss_();
-		}
-		do {
-			epart1 *= 0.9;
-			ecorr_veda_(&epart1, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &dummy, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
-		}
-		while(e1 > 0);
-		do {
-			epart2 *= 1.1;
-			ecorr_veda_(&epart2, &zpart, &apart, &(mateLS[jm].Atloc), &e2, &dummy, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
-		}
-		while(e2 <= 0);
-		for(n = 0; n < ITER; n++) {
-			epartx = (epart1 + epart2) / 2.;
-			ecorr_veda_(&epartx, &zpart, &apart, &(mateLS[jm].Atloc), &ex, &dummy, &(mateLS[jm].Absorber), &spess, &idir, &icod, &(mateLS[jm].Pression));
-			if(ex > 0) {
-				epart2 = epartx; e2 = ex;
-				if(ex < EZERO) break;
-			}
-			else {
-				epart1 = epartx; e1 = ex;
-			}
-		}
-		if(n >= ITER) printf(RED "P-T     " NRM " too many iterations while searching energy!\n");
-		out = (((double)epart1) + ((double)epart2)) / 2.;
-	}
-	if(out < 0) return -1;
-	return out;
-}
-
-double ELoss::Range(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/) {
-	if((mid < 0) || (mid >= (int)(mateID.size()))) {
-		printf(RED "Range   " NRM " bad material ID\n");
-		return -1.;
-	}
-	int jm = mateID[mid];
-	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
-		printf(RED "Range   " NRM " bad material index\n");
-		return -1.;
-	}
-	double out;
-	if(form < 5) out = ((double)Ap) * Core(2, Zp, mateLS[jm], form, ein / ((double)Ap));
-	else {
-		const double rng = ((double)Ap) * Core(2, Zp, mateLS[jm], SCHWALM, ein / ((double)Ap));
-		printf(BLD "Range   " NRM " vedaloss energy loss table selected!\n");
-		float e1, e2, ex, dummy;
-		float epart = (float)ein;
-		float zpart = (float)Zp;
-		float apart = (float)Ap;
-		float spess1 = (float)rng, spess2 = (float)rng, spessx;
-		int idir = 1, icod, n;
-		if(!vedaDB) {
-			vedaDB = true;
-			vedaloss_();
-		}
-		do {
-			spess1 *= 0.9;
-			ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &dummy, &(mateLS[jm].Absorber), &spess1, &idir, &icod, &(mateLS[jm].Pression));
-		}
-		while(e1 <= 0);
-		do {
-			spess2 *= 1.1;
-			ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e2, &dummy, &(mateLS[jm].Absorber), &spess2, &idir, &icod, &(mateLS[jm].Pression));
-		}
-		while(e2 > 0);
-		for(n = 0; n < ITER; n++) {
-			spessx = (spess1 + spess2) / 2.;
-			ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &ex, &dummy, &(mateLS[jm].Absorber), &spessx, &idir, &icod, &(mateLS[jm].Pression));
-			if(ex > 0) {
-				spess1 = spessx; e1 = ex;
-				if(ex < EZERO) break;
-			}
-			else {
-				spess2 = spessx; e2 = ex;
-			}
-		}
-		if(n >= ITER) printf(RED "Range   " NRM " too many iterations while searching energy!\n");
-		out = (((double)spess1) + ((double)spess2)) / 2.;
-	}
-	if(out < 0) return -1;
-	return out;
-}
-
-double ELoss::Thickness(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double eres /*in MeV*/) {
-	if((mid < 0) || (mid >= (int)(mateID.size()))) {
-		printf(RED "Thkness " NRM " bad material ID\n");
-		return -1.;
-	}
-	int jm = mateID[mid];
-	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
-		printf(RED "Thkness " NRM " bad material index\n");
-		return -1.;
-	}
-	double out;
-	if(form < 5) out = ((double)Ap) * Core(4, Zp, mateLS[jm], form, ein / ((double)Ap), eres / ((double)Ap));
-	else {
-		const double rng = ((double)Ap) * Core(4, Zp, mateLS[jm], SCHWALM, ein / ((double)Ap), eres / ((double)Ap));
-		printf(BLD "Thkness " NRM " vedaloss energy loss table selected!\n");
-		float e1, e2, ex, dummy;
-		float epart = (float)ein;
-		float zpart = (float)Zp;
-		float apart = (float)Ap;
-		float spess1 = (float)rng, spess2 = (float)rng, spessx;
-		int idir = 1, icod, n;
-		if(!vedaDB) {
-			vedaDB = true;
-			vedaloss_();
-		}
-		do {
-			spess1 *= 0.9;
-			ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e1, &dummy, &(mateLS[jm].Absorber), &spess1, &idir, &icod, &(mateLS[jm].Pression));
-		}
-		while(e1 <= eres);
-		do {
-			spess2 *= 1.1;
-			ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &e2, &dummy, &(mateLS[jm].Absorber), &spess2, &idir, &icod, &(mateLS[jm].Pression));
-		}
-		while(e2 > eres);
-		for(n = 0; n < ITER; n++) {
-			spessx = (spess1 + spess2) / 2.;
-			ecorr_veda_(&epart, &zpart, &apart, &(mateLS[jm].Atloc), &ex, &dummy, &(mateLS[jm].Absorber), &spessx, &idir, &icod, &(mateLS[jm].Pression));
-			if(ex > eres) {
-				spess1 = spessx; e1 = ex;
-			}
-			else {
-				spess2 = spessx; e2 = ex;
-			}
-			if(fabs(e2 - e1) < EZERO) break;
-		}
-		if(n >= ITER) printf(RED "Thkness " NRM " too many iterations while searching energy!\n");
-		out = (((double)spess1) + ((double)spess2)) / 2.;
-	}
-	if(out < 0) return -1;
-	return out;
-}
-

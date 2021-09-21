@@ -4,11 +4,12 @@ under GPLv2 or later licence. In particular:
 Spline.h and Spline.cpp were separated by myself from "spline.h" by Tino Kluge
 (ttk448 at gmail.com)
 
-vedaloss.f, ecorr_veda.f and loss1.vedasac are part of the KaliVeda data
-analysis framework ("http://indra.in2p3.fr/kaliveda/")
+Vedaloss related functions and coefficients were extracted and adapted by me
+from vedaloss.f, ecorr_veda.f and loss1.vedasac files, which are part of the
+KaliVeda data analysis framework ("http://indra.in2p3.fr/kaliveda/")
 
-functions ELoss::Schwalm and ELoss::Nuclear have been adapted by myself from
-range, by Ricardo Yanez ("http://www.calel.org/range.html")
+functions ELoss::Schwalm and ELoss::Nuclear have been adapted by me from range,
+by Ricardo Yanez ("http://www.calel.org/range.html")
 
 NIST tables were downloaded from "https://physics.nist.gov/"
 (PSTAR and ASTAR online tools)

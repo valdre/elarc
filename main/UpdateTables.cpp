@@ -7,7 +7,6 @@
 
 #include "ELoss.h"
 
-//AGGIUNGERE OPZIONI PER DECIDERE SE SOVRASCRIVERE LE VECCHIE TABELLE OPPURE NO
 int main(int argc, char *argv[]) {
 	bool over = false;
 	int c;

@@ -7,8 +7,8 @@
 
 #include "ELossGUI.h"
 
-static const char *mode_list[MODES] = {"From Ein and thickness to Elost and Eres", "From Eres and thickness to Ein and Elost", "From Elost and thickness to Ein and Eres", "From Ein and Eres to thickness", "From thickness to punch-through energy", "From punch-through energy to thickness"};
-static const char *form_list[FORMULAS] = {"NIST", "SRIM", "Barbui", "Schwalm", "vedaloss"};
+static const char *mode_list[NMODES] = {"From Ein and thickness to Elost and Eres", "From Eres and thickness to Ein and Elost", "From Elost and thickness to Ein and Eres", "From Ein and Eres to thickness", "From thickness to punch-through energy", "From punch-through energy to thickness"};
+static const char *form_list[NFORMULAS] = {"NIST", "SRIM", "Barbui", "Schwalm", "vedaloss"};
 static const char *eunit[2] = {"MeV", "MeV/u"};
 static const char *tunit[2] = {"um", "mg/cm2"};
 
@@ -52,7 +52,7 @@ MyMainFrame::MyMainFrame(const TGWindow *p, UInt_t w, UInt_t h) {
 	TGLabel *lmode = new TGLabel(hf01, "AAAAAAAAAAAAAAA", GC16b->GetGC(), font16b);
 	hf01->AddFrame(lmode, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
 	cbmode = new TGComboBox(hf01);
-	for(unsigned j = 0; j < MODES; j++) cbmode->AddEntry(mode_list[j], j);
+	for(unsigned j = 0; j < NMODES; j++) cbmode->AddEntry(mode_list[j], j);
 	cbmode->Select(0);
 	cbmode->Resize(500, 30);
 	cbmode->Connect("Selected(Int_t)", "MyMainFrame", this, "ModeSwitch(Int_t)");
@@ -73,7 +73,7 @@ MyMainFrame::MyMainFrame(const TGWindow *p, UInt_t w, UInt_t h) {
 	TGLabel *lform = new TGLabel(hf02, "AAAAAAAAAAAAAAA", GC16b->GetGC(), font16b);
 	hf02->AddFrame(lform, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
 	cbform = new TGComboBox(hf02);
-	for(unsigned j = 0; j < FORMULAS; j++) cbform->AddEntry(form_list[j], j);
+	for(unsigned j = 0; j < NFORMULAS; j++) cbform->AddEntry(form_list[j], j);
 	cbform->Select(0);
 	cbform->Resize(100, 30);
 	cbform->Connect("Selected(Int_t)", "MyMainFrame", this, "FormSwitch()");
@@ -446,7 +446,7 @@ void MyMainFrame::AbsApply() {
 }
 
 void MyMainFrame::Calculate() {
-	const int forsel[FORMULAS] = {NIST, SRIM, BARBUI, SCHWALM, VEDALOSS};
+	const int forsel[NFORMULAS] = {NIST, SRIM, BARBUI, SCHWALM, VEDALOSS};
 	
 	if(!upPro) ProApply();
 	if(!fPro) return;
@@ -467,6 +467,8 @@ void MyMainFrame::Calculate() {
 	double in2 = nein2->GetNumber();
 	double out_ein = 0, out_thk = 0, out_lst = 0, out_res = 0;
 	
+	struct timeval t0, t1, td;
+	gettimeofday(&t0, NULL);
 	switch(cbmode->GetSelected()) {
 		case 0:
 			if(swE1) in1 = el.AMeV_to_MeV(in1, proA);
@@ -474,7 +476,7 @@ void MyMainFrame::Calculate() {
 			out_ein = in1;
 			out_thk = in2;
 			out_res = el.ERes(proZ, proA, mid, forsel[cbform->GetSelected()], in1, in2);
-			out_lst = (out_res <= EZERO) ? out_ein : ((out_res >= out_ein) ? 0 : (out_ein - out_res));
+			out_lst = (out_res <= EMIN) ? out_ein : ((out_res >= out_ein) ? 0 : (out_ein - out_res));
 			break;
 		case 1:
 			if(swE1) in1 = el.AMeV_to_MeV(in1, proA);
@@ -515,6 +517,9 @@ void MyMainFrame::Calculate() {
 			out_lst = in1;
 			out_res = 0;
 	}
+	gettimeofday(&t1, NULL);
+	timersub(&t1, &t0, &td);
+	printf(GRN "ELossGUI" NRM " energy loss calculation took %2ld.%06ld s\n", td.tv_sec, td.tv_usec);
 	
 	char fmtstr[STRMAXL];
 	
@@ -524,7 +529,7 @@ void MyMainFrame::Calculate() {
 	lthk1->SetText(fmtstr);
 	printval(out_lst * 1.e6, "eV", fmtstr);
 	llst1->SetText(fmtstr);
-	if(out_res >= EZERO) {
+	if(out_res >= EMIN) {
 		printval(out_res * 1.e6, "eV", fmtstr);
 		lres1->SetText(fmtstr);
 		lres1->SetTextColor(black);
@@ -540,7 +545,7 @@ void MyMainFrame::Calculate() {
 	lthk2->SetText(fmtstr);
 	printval(el.MeV_to_AMeV(out_lst, proA) * 1.e6, "eV/u",  fmtstr);
 	llst2->SetText(fmtstr);
-	if(out_res >= EZERO) {
+	if(out_res >= EMIN) {
 		printval(el.MeV_to_AMeV(out_res, proA) * 1.e6, "eV/u",  fmtstr);
 		lres2->SetText(fmtstr);
 		lres2->SetTextColor(black);
