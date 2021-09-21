@@ -14,4 +14,4 @@ UpdateTables: main/UpdateTables.cpp modules/ELoss.o modules/Spline.o
 	g++ -Wall -Wextra -Imodules -o $@ $^ -lm
 
 clean:
-	rm -f *.out modules/*.o *.pcm modules/*.pcm modules/*.cxx ELossGUI UpdateTables
+	rm -f *.out modules/*.o *.pcm modules/*.pcm modules/*.cxx ELossGUI UpdateTables db/vedasac2coe_C*
