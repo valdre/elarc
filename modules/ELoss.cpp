@@ -559,7 +559,7 @@ int ELoss::Tab(const int form, const int Zp, const struct material &mat) {
 	}
 	
 	int ret;
-	double e, rng, dd1, dd2, emax = 0;
+	double e, rng, dd1, dd2, emax = 0, rmax = 0;
 	std::vector< double > vE, vR, vDe, vDn;
 	char row[STRMAXL];
 	for(;;) {
@@ -568,7 +568,8 @@ int ELoss::Tab(const int form, const int Zp, const struct material &mat) {
 		if(ret != 4) continue;
 		
 		vE.push_back(e); vDe.push_back(dd1); vDn.push_back(dd2); vR.push_back(rng);
-		if(e > emax) emax = e;
+		if(e > emax)   emax = e;
+		if(rng > rmax) rmax = rng;
 	}
 	fclose(f);
 	
@@ -579,7 +580,7 @@ int ELoss::Tab(const int form, const int Zp, const struct material &mat) {
 	
 	struct table tb;
 	tb.z = Zp; tb.mid = mat.mid; tb.form = form;
-	tb.emax = emax;
+	tb.emax = emax; tb.rmax = rmax;
 	tb.range.set_points(vE, vR);
 	tb.energy.set_points(vR, vE);
 	tb.dedx_e.set_points(vE, vDe);
@@ -1101,18 +1102,23 @@ double ELoss::Compute(const int mode, const int Zp, const int Ap, const int mid,
 	//MODE 2 is peculiar: I need to perform an iterative calculation
 	if(mode == ELST_THK_TO_EIN) {
 		const double thk = um_to_mgcm2(in2, mateLS[jm].rho);
+		if(thk > tables[tidx].rmax) {
+			printf(RED "Compute " NRM " MODE 2: range table is too short (check 1)!\n");
+			return -1;
+		}
+		
 		const double ept = tables[tidx].energy(thk);
 		if(fabs(in1 - ept) < 0.5 * EMIN) {
 			return ept * (double)Ap;
 		}
 		if(in1 > ept) {
-			printf(RED "Compute " NRM " input 1 is greater than punch-through energy (%lg MeV/u)!\n", ept);
+			printf(RED "Compute " NRM " MODE 2: lost energy is greater than punch-through E (%lg MeV/u)!\n", ept);
 			return -1;
 		}
 		double e1 = ept;
 		double e2 = tables[tidx].emax;
 		if(e2 <= e1) {
-			printf(RED "Compute " NRM " energy loss table is too short (check 1)!\n");
+			printf(RED "Compute " NRM " MODE 2: range table is too short (check 2)!\n");
 			return -1;
 		}
 		
@@ -1122,23 +1128,23 @@ double ELoss::Compute(const int mode, const int Zp, const int Ap, const int mid,
 			return e2 * (double)Ap;
 		}
 		if(rx < thk) {
-			printf(RED "Compute " NRM " energy loss table is too short (check 2)!\n");
+			printf(RED "Compute " NRM " MODE 2: range table is too short (check 3)!\n");
 			return -1;
 		}
 		
 		int n;
 		for(n = 0; n < ITER; n++) {
-			ex = (e1 + e2) / 2.;
+			ex = 0.5 * (e1 + e2);
 			rx = tables[tidx].range(ex) - tables[tidx].range(ex - in1);
 			if(fabs(rx - thk) / thk < PREC) {
 				return ex * (double)Ap;
 			}
 			if(rx < thk) e1 = ex;
 			else e2 = ex;
-			if(e2 - e1 < 10. * EMIN) break;
+			if((e2 - e1) / e1 < 2. * PREC) break;
 		}
 		if(n >= ITER) {
-			printf(YEL "Compute " NRM " too many iterations while searching energy!\n");
+			printf(YEL "Compute " NRM " MODE 2: too many iterations while searching energy!\n");
 		}
 		return 0.5 * (e1 + e2) * (double)Ap;
 	}
@@ -1146,12 +1152,20 @@ double ELoss::Compute(const int mode, const int Zp, const int Ap, const int mid,
 	//MODE 4 is the only one in which in1 is a thickness
 	if(mode == THK_TO_EPT) {
 		//in1 is a thickness with unit um => must be converted to mg/cm^2
-		return tables[tidx].energy(um_to_mgcm2(in1, mateLS[jm].rho)) * (double)Ap;
+		const double thk = um_to_mgcm2(in1, mateLS[jm].rho);
+		if(thk > tables[tidx].rmax) {
+			printf(RED "Compute " NRM " MODE 4: range table is too short!\n");
+			return -1;
+		}
+		return tables[tidx].energy(thk) * (double)Ap;
 	}
 	
 	//in all the other modes in1 is an energy
+	if(in1 > tables[tidx].emax) {
+		printf(RED "Compute " NRM " MODE %d: range table is too short (check 1)!\n", mode);
+		return -1;
+	}
 	double range = tables[tidx].range(in1);
-	if(range < 0) return -1.;
 	
 	//MODE 5 is easy: just computing the range is sufficient
 	if(mode == EPT_TO_THK) {
@@ -1161,8 +1175,15 @@ double ELoss::Compute(const int mode, const int Zp, const int Ap, const int mid,
 	double tres;
 	//MODE 3 is the only one in which in2 is an energy
 	if(mode == EIN_ERES_TO_THK) {
+		if(in2 > in1) {
+			printf(RED "Compute " NRM " MODE 3: residual energy is greater than initial energy!\n");
+			return -1;
+		}
+		if(in2 > tables[tidx].emax) {
+			printf(RED "Compute " NRM " MODE 3: range table is too short (check 2)!\n");
+			return -1;
+		}
 		tres = tables[tidx].range(in2);
-		if((tres < 0) || (tres > range)) return -1; //QUESTO CONTROLLO ANDREBBE MESSO OVUNQUE!!!
 		return mgcm2_to_um(range - tres, mateLS[jm].rho) * (double)Ap;
 	}
 	
@@ -1174,5 +1195,9 @@ double ELoss::Compute(const int mode, const int Zp, const int Ap, const int mid,
 	}
 	else tres = range + in2;
 	
+	if(tres > tables[tidx].rmax) {
+		printf(RED "Compute " NRM " MODE %d: range table is too short (check 2)!\n", mode);
+		return -1;
+	}
 	return tables[tidx].energy(tres) * (double)Ap;
 }

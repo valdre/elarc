@@ -1,6 +1,6 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 31/08/2021                          *
+*                         Simone Valdre' - 21/09/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
 *******************************************************************************/ 
@@ -180,27 +180,19 @@ MyMainFrame::MyMainFrame(const TGWindow *p, UInt_t w, UInt_t h) {
 	
 	//** hf09 starts
 	TGHorizontalFrame *hf09=new TGHorizontalFrame(vlay);
-	lein1 = new TGLabel(hf09,"AAAAAAAAAAAA",GC16->GetGC(),font16);
-	hf09->AddFrame(lein1, new TGLayoutHints(kLHintsCenterX,5,5,3,4));
-	lthk1 = new TGLabel(hf09,"AAAAAAAAAAAA",GC16->GetGC(),font16);
-	hf09->AddFrame(lthk1, new TGLayoutHints(kLHintsCenterX,5,5,3,4));
-	llst1 = new TGLabel(hf09,"AAAAAAAAAAAA",GC16->GetGC(),font16);
-	hf09->AddFrame(llst1, new TGLayoutHints(kLHintsCenterX,5,5,3,4));
-	lres1 = new TGLabel(hf09,"AAAAAAAAAAAA",GC16->GetGC(),font16);
-	hf09->AddFrame(lres1, new TGLayoutHints(kLHintsCenterX,5,5,3,4));
+	for(unsigned j = 0; j < 4; j++) {
+		lout[0][j] = new TGLabel(hf09,"AAAAAAAAAAAA",GC16->GetGC(),font16);
+		hf09->AddFrame(lout[0][j], new TGLayoutHints(kLHintsCenterX,5,5,3,4));
+	}
 	vlay->AddFrame(hf09, new TGLayoutHints(kLHintsExpandX|kLHintsCenterX|kLHintsCenterY,2,2,2,2));
 	//** hf09 ends
 	
 	//** hf10 starts
 	TGHorizontalFrame *hf10=new TGHorizontalFrame(vlay);
-	lein2 = new TGLabel(hf10,"AAAAAAAAAAAA",GC16->GetGC(),font16);
-	hf10->AddFrame(lein2, new TGLayoutHints(kLHintsCenterX,5,5,3,4));
-	lthk2 = new TGLabel(hf10,"AAAAAAAAAAAA",GC16->GetGC(),font16);
-	hf10->AddFrame(lthk2, new TGLayoutHints(kLHintsCenterX,5,5,3,4));
-	llst2 = new TGLabel(hf10,"AAAAAAAAAAAA",GC16->GetGC(),font16);
-	hf10->AddFrame(llst2, new TGLayoutHints(kLHintsCenterX,5,5,3,4));
-	lres2 = new TGLabel(hf10,"AAAAAAAAAAAA",GC16->GetGC(),font16);
-	hf10->AddFrame(lres2, new TGLayoutHints(kLHintsCenterX,5,5,3,4));
+	for(unsigned j = 0; j < 4; j++) {
+		lout[1][j] = new TGLabel(hf10,"AAAAAAAAAAAA",GC16->GetGC(),font16);
+		hf10->AddFrame(lout[1][j], new TGLayoutHints(kLHintsCenterX,5,5,3,4));
+	}
 	vlay->AddFrame(hf10, new TGLayoutHints(kLHintsExpandX|kLHintsCenterX|kLHintsCenterY,2,2,2,2));
 	//** hf10 ends
 	
@@ -245,15 +237,11 @@ MyMainFrame::MyMainFrame(const TGWindow *p, UInt_t w, UInt_t h) {
 	tbcalc->SetText("&Calculate");
 	tbexit->SetText("&Exit");
 	
-	lein1->SetText("-");
-	lthk1->SetText("-");
-	llst1->SetText("-");
-	lres1->SetText("-");
-	
-	lein2->SetText("-");
-	lthk2->SetText("-");
-	llst2->SetText("-");
-	lres2->SetText("-");
+	for(unsigned i = 0; i < 2; i++) {
+		for(unsigned j = 0; j < 4; j++) {
+			lout[i][j]->SetText("-");
+		}
+	}
 	
 	swE1 = 0; swE2 = 0; swT = 0;
 	up = true;
@@ -446,6 +434,9 @@ void MyMainFrame::AbsApply() {
 }
 
 void MyMainFrame::Calculate() {
+	char fmtstr[STRMAXL];
+	double in1, in2, out, outv[4];
+	int mode;
 	const int forsel[NFORMULAS] = {NIST, SRIM, BARBUI, SCHWALM, VEDALOSS};
 	
 	if(!upPro) ProApply();
@@ -460,109 +451,113 @@ void MyMainFrame::Calculate() {
 	double T = netem->GetNumber();
 	double rho = nerho->GetNumber();
 	el.SetAbsParam(mid, isgas, rho, P, T);
-	if(el.GetAbsParam(mid, isgas, rho, P, T) < 0) return;
+	if(el.GetAbsParam(mid, isgas, rho, P, T) < 0) goto bad;
 	if(isgas && (rho > 0)) nerho->SetNumber(rho);
 	
-	double in1 = nein1->GetNumber();
-	double in2 = nein2->GetNumber();
-	double out_ein = 0, out_thk = 0, out_lst = 0, out_res = 0;
+	in1 = nein1->GetNumber();
+	in2 = nein2->GetNumber();
+	
+	mode = cbmode->GetSelected();
+	if((mode != 4) && swE1) in1 = el.AMeV_to_MeV(in1, proA);
+	if((mode == 4) && swT)  in1 = el.mgcm2_to_um(in1, rho);
+	if((mode <  3) && swT)  in2 = el.mgcm2_to_um(in2, rho);
+	if((mode == 3) && swE2) in2 = el.AMeV_to_MeV(in2, proA);
 	
 	struct timeval t0, t1, td;
 	gettimeofday(&t0, NULL);
-	switch(cbmode->GetSelected()) {
-		case 0:
-			if(swE1) in1 = el.AMeV_to_MeV(in1, proA);
-			if(swT)  in2 = el.mgcm2_to_um(in2, rho);
-			out_ein = in1;
-			out_thk = in2;
-			out_res = el.ERes(proZ, proA, mid, forsel[cbform->GetSelected()], in1, in2);
-			out_lst = (out_res <= EMIN) ? out_ein : ((out_res >= out_ein) ? 0 : (out_ein - out_res));
-			break;
-		case 1:
-			if(swE1) in1 = el.AMeV_to_MeV(in1, proA);
-			if(swT)  in2 = el.mgcm2_to_um(in2, rho);
-			out_ein = el.EIn_res(proZ, proA, mid, forsel[cbform->GetSelected()], in1, in2);
-			out_thk = in2;
-			out_res = in1;
-			out_lst = out_ein - out_res;
-			break;
-		case 2:
-			if(swE1) in1 = el.AMeV_to_MeV(in1, proA);
-			if(swT)  in2 = el.mgcm2_to_um(in2, rho);
-			out_ein = el.EIn_lost(proZ, proA, mid, forsel[cbform->GetSelected()], in1, in2);
-			out_thk = in2;
-			out_lst = in1;
-			out_res = out_ein - out_lst;
-			break;
-		case 3:
-			if(swE1) in1 = el.AMeV_to_MeV(in1, proA);
-			if(swE2) in2 = el.AMeV_to_MeV(in2, proA);
-			if(in1 <= in2) return;
-			out_ein = in1;
-			out_thk = el.Thickness(proZ, proA, mid, forsel[cbform->GetSelected()], in1, in2);
-			out_res = in2;
-			out_lst = out_ein - out_res;
-			break;
-		case 4:
-			if(swT)  in1 = el.mgcm2_to_um(in1, rho);
-			out_ein = el.PunchThrough(proZ, proA, mid, forsel[cbform->GetSelected()], in1);
-			out_thk = in1;
-			out_lst = out_ein;
-			out_res = 0;
-			break;
-		case 5:
-			if(swE1) in1 = el.AMeV_to_MeV(in1, proA);
-			out_ein = in1;
-			out_thk = el.Range(proZ, proA, mid, forsel[cbform->GetSelected()], in1);
-			out_lst = in1;
-			out_res = 0;
-	}
+	out = el.Compute(mode, proZ, proA, mid, forsel[cbform->GetSelected()], in1, in2);
 	gettimeofday(&t1, NULL);
 	timersub(&t1, &t0, &td);
 	printf(GRN "ELossGUI" NRM " energy loss calculation took %2ld.%06ld s\n", td.tv_sec, td.tv_usec);
+	if(out < 0) goto bad;
 	
-	char fmtstr[STRMAXL];
+	switch(mode) {
+		case 0:
+			outv[0] = in1;
+			outv[1] = in2;
+			outv[2] = in1 - out;
+			outv[3] = out;
+			break;
+		case 1:
+			outv[0] = out;
+			outv[1] = in2;
+			outv[2] = out - in1;
+			outv[3] = in1;
+			break;
+		case 2:
+			outv[0] = out;
+			outv[1] = in2;
+			outv[2] = in1;
+			outv[3] = out - in1;
+			break;
+		case 3:
+			outv[0] = in1;
+			outv[1] = out;
+			outv[2] = in1 - in2;
+			outv[3] = in2;
+			break;
+		case 4:
+			outv[0] = out;
+			outv[1] = in1;
+			outv[2] = out;
+			outv[3] = 0;
+			break;
+		case 5:
+			outv[0] = in1;
+			outv[1] = out;
+			outv[2] = in1;
+			outv[3] = 0;
+	}
 	
-	printval(out_ein * 1.e6, "eV", fmtstr);
-	lein1->SetText(fmtstr);
-	printval(out_thk * 1.e-6, "m", fmtstr);
-	lthk1->SetText(fmtstr);
-	printval(out_lst * 1.e6, "eV", fmtstr);
-	llst1->SetText(fmtstr);
-	if(out_res >= EMIN) {
-		printval(out_res * 1.e6, "eV", fmtstr);
-		lres1->SetText(fmtstr);
-		lres1->SetTextColor(black);
+	printval(outv[0] * 1.e6, "eV", fmtstr);
+	lout[0][0]->SetText(fmtstr);
+	printval(outv[1] * 1.e-6, "m", fmtstr);
+	lout[0][1]->SetText(fmtstr);
+	printval(outv[2] * 1.e6, "eV", fmtstr);
+	lout[0][2]->SetText(fmtstr);
+	if(outv[3] >= EMIN) {
+		printval(outv[3] * 1.e6, "eV", fmtstr);
+		lout[0][3]->SetText(fmtstr);
+		lout[0][3]->SetTextColor(black);
 	}
 	else {
-		lres1->SetText("-");
-		lres1->SetTextColor(gray);
+		lout[0][3]->SetText("-");
+		lout[0][3]->SetTextColor(gray);
 	}
 	
-	printval(el.MeV_to_AMeV(out_ein, proA) * 1.e6, "eV/u",  fmtstr);
-	lein2->SetText(fmtstr);
-	printval(el.um_to_mgcm2(out_thk, rho) * 1.e-3, "g/cm2", fmtstr);
-	lthk2->SetText(fmtstr);
-	printval(el.MeV_to_AMeV(out_lst, proA) * 1.e6, "eV/u",  fmtstr);
-	llst2->SetText(fmtstr);
-	if(out_res >= EMIN) {
-		printval(el.MeV_to_AMeV(out_res, proA) * 1.e6, "eV/u",  fmtstr);
-		lres2->SetText(fmtstr);
-		lres2->SetTextColor(black);
+	printval(el.MeV_to_AMeV(outv[0], proA) * 1.e6, "eV/u",  fmtstr);
+	lout[1][0]->SetText(fmtstr);
+	printval(el.um_to_mgcm2(outv[1], rho) * 1.e-3, "g/cm2", fmtstr);
+	lout[1][1]->SetText(fmtstr);
+	printval(el.MeV_to_AMeV(outv[2], proA) * 1.e6, "eV/u",  fmtstr);
+	lout[1][2]->SetText(fmtstr);
+	if(outv[3] >= EMIN) {
+		printval(el.MeV_to_AMeV(outv[3], proA) * 1.e6, "eV/u",  fmtstr);
+		lout[1][3]->SetText(fmtstr);
+		lout[1][3]->SetTextColor(black);
 	}
 	else {
-		lres2->SetText("-");
-		lres2->SetTextColor(gray);
+		lout[1][3]->SetText("-");
+		lout[1][3]->SetTextColor(gray);
 	}
 	
 	tbcalc->ChangeBackground(green->GetPixel());
-	lein1->SetTextColor(black);
-	lthk1->SetTextColor(black);
-	llst1->SetTextColor(black);
-	lein2->SetTextColor(black);
-	lthk2->SetTextColor(black);
-	llst2->SetTextColor(black);
+	for(unsigned i = 0; i < 2; i++) {
+		for(unsigned j = 0; j < 3; j++) {
+			lout[i][j]->SetTextColor(black);
+		}
+	}
 	up = true;
+	return;
+	
+	bad:
+	up = true;
+	tbcalc->ChangeBackground(red->GetPixel());
+	for(unsigned i = 0; i < 2; i++) {
+		for(unsigned j = 0; j < 4; j++) {
+			lout[i][j]->SetTextColor(gray);
+		}
+	}
 	return;
 }
 
@@ -570,14 +565,11 @@ void MyMainFrame::SetOutOfDate() {
 	if(!up) return;
 	up = false;
 	tbcalc->ChangeBackground(yello->GetPixel());
-	lein1->SetTextColor(gray);
-	lthk1->SetTextColor(gray);
-	llst1->SetTextColor(gray);
-	lres1->SetTextColor(gray);
-	lein2->SetTextColor(gray);
-	lthk2->SetTextColor(gray);
-	llst2->SetTextColor(gray);
-	lres2->SetTextColor(gray);
+	for(unsigned i = 0; i < 2; i++) {
+		for(unsigned j = 0; j < 4; j++) {
+			lout[i][j]->SetTextColor(gray);
+		}
+	}
 	return;
 }
 

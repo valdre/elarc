@@ -1,6 +1,6 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 31/08/2021                          *
+*                         Simone Valdre' - 21/09/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
 *******************************************************************************/ 
@@ -32,7 +32,7 @@ class MyMainFrame {
 private:
 	TGMainFrame  *fMain;
 	TGComboBox *cbmode, *cbform, *cbstate;
-	TGLabel *lin1, *lin2, *lein1, *lein2, *lthk1, *lthk2, *llst1, *llst2, *lres1, *lres2;
+	TGLabel *lin1, *lin2, *lout[2][4];
 	TGNumberEntry *nein1, *nein2, *nepre, *netem, *nerho;
 	TGTextButton *tbin1, *tbin2, *tbcalc;
 	TGTextEntry *tepro, *tetar;

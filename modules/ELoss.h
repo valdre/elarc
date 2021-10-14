@@ -77,7 +77,7 @@ struct material {
 struct table {
 	//one table for each projectile Z, material and energy loss formula (except vedaloss)
 	int z, mid, form;
-	double emax;
+	double emax, rmax;
 	tk::spline range; //range table (integral of 1/(dE/dx) in funcion of E/A)
 	tk::spline energy;  //energy table (E/A in function of the integral of 1/(dE/dx))
 	tk::spline dedx_e, dedx_n; //electronic and nuclear dE/dx in function of E/A
@@ -100,31 +100,6 @@ public:
 	void UpdateTables(bool over = false);
 	
 	double Compute(const int mode, const int Zp, const int Ap, const int mid, const int form, double in1, double in2 = -1);
-	
-	//Legacy functions
-	double ERes(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thk /*in um*/) {
-		return Compute(EIN_THK_TO_ERES, Zp, Ap, mid, form, ein, thk);
-	}
-	double ELost(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double thk /*in um*/) {
-		double eres = Compute(EIN_THK_TO_ERES, Zp, Ap, mid, form, ein, thk);
-		if((eres < 0) || (eres > ein)) return -1;
-		return ein - eres;
-	}
-	double EIn_res(const int Zp, const int Ap, const int mid, const int form, const double eres /*in MeV*/, const double thk /*in um*/) {
-		return Compute(ERES_THK_TO_EIN, Zp, Ap, mid, form, eres, thk);
-	}
-	double EIn_lost(const int Zp, const int Ap, const int mid, const int form, const double elst /*in MeV*/, const double thk /*in um*/) {
-		return Compute(ELST_THK_TO_EIN, Zp, Ap, mid, form, elst, thk);
-	}
-	double Thickness(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/, const double eres /*in MeV*/) {
-		return Compute(EIN_ERES_TO_THK, Zp, Ap, mid, form, ein, eres);
-	}
-	double Range(const int Zp, const int Ap, const int mid, const int form, const double ein /*in MeV*/) {
-		return Compute(EPT_TO_THK, Zp, Ap, mid, form, ein);
-	}
-	double PunchThrough(const int Zp, const int Ap, const int mid, const int form, const double thk /*in um*/) {
-		return Compute(THK_TO_EPT, Zp, Ap, mid, form, thk);
-	}
 	
 	static inline double MeV_to_AMeV(double MeV,   double A)   {return MeV/A;};
 	static inline double AMeV_to_MeV(double AMeV,  double A)   {return AMeV*A;};
