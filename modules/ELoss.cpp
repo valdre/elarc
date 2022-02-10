@@ -1,6 +1,6 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 21/09/2021                          *
+*                         Simone Valdre' - 17/11/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
 *******************************************************************************/
@@ -1200,4 +1200,43 @@ double ELoss::Compute(const int mode, const int Zp, const int Ap, const int mid,
 		return -1;
 	}
 	return tables[tidx].energy(tres) * (double)Ap;
+}
+
+double ELoss::Getdedx(const int Zp, const int Ap, const int mid, const int form, double ein) {
+	if(Zp <= 0 || Zp > 118) {
+		printf(RED "Getdedx " NRM " Projectile Z out of range [1:118] (%d)\n", Zp);
+		return -1.;
+	}
+	if(Ap <= 0 || Ap > 300) {
+		printf(RED "Getdedx " NRM " Projectile A out of range [1:300] (%d)\n", Ap);
+		return -1.;
+	}
+	
+	ein /= (double)Ap;
+	if(ein < 0) {
+		printf(RED "Getdedx " NRM " Negative value for energy not admitted (%f)\n", ein);
+		return -1.;
+	}
+	if((mid < 0) || (mid >= (int)(mateID.size()))) {
+		printf(RED "Getdedx " NRM " Bad material ID\n");
+		return -1.;
+	}
+	int jm = mateID[mid];
+	if((jm < 0) || (jm >= (int)(mateLS.size()))) {
+		printf(RED "Getdedx " NRM " Bad material index\n");
+		return -1.;
+	}
+	
+	int tidx = -1;
+	for(int j = 1; j <= NFORMULAS; j++) {
+		if((form != 0) && (form != j)) continue;
+		tidx = Tab(j, Zp, mateLS[jm]);
+		if(tidx >= 0) break;
+	}
+	if(tidx < 0) {
+		printf(RED "Getdedx " NRM " No valid energy loss formula exists for Z = %d in %s\n", Zp, mateLS[jm].Name.c_str());
+		return -1.;
+	}
+	
+	return tables[tidx].dedx_e(ein) + tables[tidx].dedx_n(ein);
 }

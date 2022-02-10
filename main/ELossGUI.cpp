@@ -7,10 +7,31 @@
 
 #include "ELossGUI.h"
 
+#define NEUNIT 3
+#define NTUNIT 5
+
 static const char *mode_list[NMODES] = {"From Ein and thickness to Elost and Eres", "From Eres and thickness to Ein and Elost", "From Elost and thickness to Ein and Eres", "From Ein and Eres to thickness", "From thickness to punch-through energy", "From punch-through energy to thickness"};
 static const char *form_list[NFORMULAS] = {"NIST", "SRIM", "Barbui", "Schwalm", "vedaloss"};
-static const char *eunit[2] = {"MeV", "MeV/u"};
-static const char *tunit[2] = {"um", "mg/cm2"};
+static const char *eunit[NEUNIT] = {"keV", "MeV", "MeV/u"};
+static const char *tunit[NTUNIT] = {"nm", "um", "mm", "ug/cm2", "mg/cm2"};
+
+double econv(const int &sel, double in, const double A = 1) {
+	switch(sel) {
+		case 0: in /= 1000.; break;
+		case 2: in = ELoss::AMeV_to_MeV(in, A);
+	}
+	return in;
+}
+
+double tconv(const int &sel, double in, const double rho = 1) {
+	switch(sel) {
+		case 0: in /= 1000.; break;
+		case 2: in *= 1000.; break;
+		case 3: in /= 1000.; [[fallthrough]];
+		case 4: in = ELoss::mgcm2_to_um(in, rho);
+	}
+	return in;
+}
 
 void printval(double v, const char *u, char *out) {
 	char mod[11][10] = {"f", "p", "n", "u", "m", " ", "k", "M", "G", "T", "P"};
@@ -85,24 +106,28 @@ MyMainFrame::MyMainFrame(const TGWindow *p, UInt_t w, UInt_t h) {
 	TGHorizontalFrame *hf03 = new TGHorizontalFrame(vlay);
 	lin1 = new TGLabel(hf03, "AAAAAAAAAAAA", GC16b->GetGC(), font16b);
 	hf03->AddFrame(lin1, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
-	nein1 = new TGNumberEntry(hf03, 50, 8, -1, TGNumberFormat::kNESRealTwo, TGNumberFormat::kNEANonNegative);
+	nein1 = new TGNumberEntry(hf03, 0, 8, -1, TGNumberFormat::kNESRealTwo, TGNumberFormat::kNEANonNegative);
 	nein1->Resize(80, 30);
 	nein1->GetNumberEntry()->Connect("TextChanged(const char *)", "MyMainFrame", this, "SetOutOfDate()");
 	hf03->AddFrame(nein1, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
-	tbin1 = new TGTextButton(hf03, "AAAAAAAAAA\nAAAAAAAAAA");
-	tbin1->SetFont(font16);
-	tbin1->Connect("Clicked()", "MyMainFrame", this, "In1Switch()");
-	hf03->AddFrame(tbin1, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+	cbin1 = new TGComboBox(hf03);
+	for(unsigned j = 0; j < NEUNIT; j++) cbin1->AddEntry(eunit[j], j);
+	cbin1->Select(1);
+	cbin1->Resize(100, 30);
+	cbin1->Connect("Selected(Int_t)", "MyMainFrame", this, "SetOutOfDate()");
+	hf03->AddFrame(cbin1, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
 	lin2 = new TGLabel(hf03, "AAAAAAAAAAAA", GC16b->GetGC(), font16b);
 	hf03->AddFrame(lin2, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
-	nein2 = new TGNumberEntry(hf03, 300, 8, -1, TGNumberFormat::kNESRealTwo, TGNumberFormat::kNEANonNegative);
+	nein2 = new TGNumberEntry(hf03, 0, 8, -1, TGNumberFormat::kNESRealTwo, TGNumberFormat::kNEANonNegative);
 	nein2->Resize(80, 30);
 	nein2->GetNumberEntry()->Connect("TextChanged(const char *)", "MyMainFrame", this, "SetOutOfDate()");
 	hf03->AddFrame(nein2, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
-	tbin2 = new TGTextButton(hf03, "AAAAAAAAAA\nAAAAAAAAAA");
-	tbin2->SetFont(font16);
-	tbin2->Connect("Clicked()", "MyMainFrame", this, "In2Switch()");
-	hf03->AddFrame(tbin2, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
+	cbin2 = new TGComboBox(hf03);
+	for(unsigned j = 0; j < NTUNIT; j++) cbin2->AddEntry(tunit[j], j);
+	cbin2->Select(1);
+	cbin2->Resize(100, 30);
+	cbin2->Connect("Selected(Int_t)", "MyMainFrame", this, "SetOutOfDate()");
+	hf03->AddFrame(cbin2, new TGLayoutHints(kLHintsCenterX, 5, 5, 3, 4));
 	vlay->AddFrame(hf03, new TGLayoutHints(kLHintsExpandX|kLHintsCenterX|kLHintsCenterY, 2, 2, 2, 2));
 	//** hf03 ends
 	
@@ -243,7 +268,6 @@ MyMainFrame::MyMainFrame(const TGWindow *p, UInt_t w, UInt_t h) {
 		}
 	}
 	
-	swE1 = 0; swE2 = 0; swT = 0;
 	up = true;
 	
 	mid = -1;
@@ -259,95 +283,67 @@ MyMainFrame::~MyMainFrame() {
 }
 
 void MyMainFrame::ModeSwitch(int mode) {
+	nein1->SetNumber(0);
+	nein2->SetNumber(0);
+	cbin1->RemoveAll();
 	if(mode > 3) {
 		nein2->SetState(kFALSE);
 		lin2->SetText("");
-		tbin2->SetEnabled(kFALSE);
+		cbin2->SetEnabled(kFALSE);
 	}
 	else {
 		nein2->SetState(kTRUE);
-		tbin2->SetEnabled(kTRUE);
+		cbin2->SetEnabled(kTRUE);
+		cbin2->RemoveAll();
 	}
 	switch(mode) {
 		case 0:
 			lin1->SetText("Initial E");
-			tbin1->SetText(eunit[swE1]);
+			for(unsigned j = 0; j < NEUNIT; j++) cbin1->AddEntry(eunit[j], j);
+			cbin1->Select(1);
 			lin2->SetText("Abs. thickness");
-			tbin2->SetText(tunit[swT]);
+			for(unsigned j = 0; j < NTUNIT; j++) cbin2->AddEntry(tunit[j], j);
+			cbin2->Select(1);
 			break;
 		case 1:
 			lin1->SetText("Residual E");
-			tbin1->SetText(eunit[swE1]);
+			for(unsigned j = 0; j < NEUNIT; j++) cbin1->AddEntry(eunit[j], j);
+			cbin1->Select(1);
 			lin2->SetText("Abs. thickness");
-			tbin2->SetText(tunit[swT]);
+			for(unsigned j = 0; j < NTUNIT; j++) cbin2->AddEntry(tunit[j], j);
+			cbin2->Select(1);
 			break;
 		case 2:
 			lin1->SetText("Lost E");
-			tbin1->SetText(eunit[swE1]);
+			for(unsigned j = 0; j < NEUNIT; j++) cbin1->AddEntry(eunit[j], j);
+			cbin1->Select(1);
 			lin2->SetText("Abs. thickness");
-			tbin2->SetText(tunit[swT]);
+			for(unsigned j = 0; j < NTUNIT; j++) cbin2->AddEntry(tunit[j], j);
+			cbin2->Select(1);
 			break;
 		case 3:
 			lin1->SetText("Initial E");
-			tbin1->SetText(eunit[swE1]);
+			for(unsigned j = 0; j < NEUNIT; j++) cbin1->AddEntry(eunit[j], j);
+			cbin1->Select(1);
 			lin2->SetText("Residual E");
-			tbin2->SetText(eunit[swE2]);
+			for(unsigned j = 0; j < NTUNIT; j++) cbin2->AddEntry(tunit[j], j);
+			cbin2->Select(1);
 			break;
 		case 4:
 			lin1->SetText("Abs. thickness");
-			tbin1->SetText(tunit[swT]);
+			for(unsigned j = 0; j < NTUNIT; j++) cbin1->AddEntry(tunit[j], j);
+			cbin1->Select(1);
 			break;
 		case 5:
 			lin1->SetText("P.-T. energy");
-			tbin1->SetText(eunit[swE1]);
+			for(unsigned j = 0; j < NEUNIT; j++) cbin1->AddEntry(eunit[j], j);
+			cbin1->Select(1);
 	}
 	SetOutOfDate();
 	return;
 }
 
 void MyMainFrame::FormSwitch() {
-	SetOutOfDate();
-	return;
-}
-
-void MyMainFrame::In1Switch() {
-	switch(cbmode->GetSelected()) {
-		case 0:
-			tbin1->SetText(eunit[swE1 = 1 - swE1]);
-			break;
-		case 1:
-			tbin1->SetText(eunit[swE1 = 1 - swE1]);
-			break;
-		case 2:
-			tbin1->SetText(eunit[swE1 = 1 - swE1]);
-			break;
-		case 3:
-			tbin1->SetText(eunit[swE1 = 1 - swE1]);
-			break;
-		case 4:
-			tbin1->SetText(tunit[swT = 1 - swT]);
-			break;
-		case 5:
-			tbin1->SetText(eunit[swE1 = 1 - swE1]);
-	}
-	SetOutOfDate();
-	return;
-}
-
-void MyMainFrame::In2Switch() {
-	switch(cbmode->GetSelected()) {
-		case 0:
-			tbin2->SetText(tunit[swT = 1 - swT]);
-			break;
-		case 1:
-			tbin2->SetText(tunit[swT = 1 - swT]);
-			break;
-		case 2:
-			tbin2->SetText(tunit[swT = 1 - swT]);
-			break;
-		case 3:
-			tbin2->SetText(eunit[swE2 = 1 - swE2]);
-	}
 	SetOutOfDate();
 	return;
 }
@@ -458,10 +454,10 @@ void MyMainFrame::Calculate() {
 	in2 = nein2->GetNumber();
 	
 	mode = cbmode->GetSelected();
-	if((mode != 4) && swE1) in1 = el.AMeV_to_MeV(in1, proA);
-	if((mode == 4) && swT)  in1 = el.mgcm2_to_um(in1, rho);
-	if((mode <  3) && swT)  in2 = el.mgcm2_to_um(in2, rho);
-	if((mode == 3) && swE2) in2 = el.AMeV_to_MeV(in2, proA);
+	if(mode == 4)      in1 = tconv(cbin1->GetSelected(), in1, rho);
+	else               in1 = econv(cbin1->GetSelected(), in1, proA);
+	if(mode < 3)       in2 = tconv(cbin2->GetSelected(), in2, rho);
+	else if(mode == 3) in2 = econv(cbin2->GetSelected(), in2, proA);
 	
 	struct timeval t0, t1, td;
 	gettimeofday(&t0, NULL);

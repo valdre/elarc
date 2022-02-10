@@ -1,6 +1,6 @@
 /*******************************************************************************
 *                                                                              *
-*                         Simone Valdre' - 21/09/2021                          *
+*                         Simone Valdre' - 17/11/2021                          *
 *                  distributed under GPL-3.0-or-later licence                  *
 *                                                                              *
 *******************************************************************************/ 
@@ -75,7 +75,7 @@ struct material {
 };
 
 struct table {
-	//one table for each projectile Z, material and energy loss formula (except vedaloss)
+	//one table for each projectile Z, material and energy loss formula
 	int z, mid, form;
 	double emax, rmax;
 	tk::spline range; //range table (integral of 1/(dE/dx) in funcion of E/A)
@@ -100,11 +100,12 @@ public:
 	void UpdateTables(bool over = false);
 	
 	double Compute(const int mode, const int Zp, const int Ap, const int mid, const int form, double in1, double in2 = -1);
+	double Getdedx(const int Zp, const int Ap, const int mid, const int form, double ein);
 	
-	static inline double MeV_to_AMeV(double MeV,   double A)   {return MeV/A;};
-	static inline double AMeV_to_MeV(double AMeV,  double A)   {return AMeV*A;};
-	static inline double um_to_mgcm2(double um,    double rho) {return rho*um/10000.;};
-	static inline double mgcm2_to_um(double mgcm2, double rho) {return 10000.*mgcm2/rho;};
+	static inline double MeV_to_AMeV(const double &MeV,   const double &A)   {return MeV/A;};
+	static inline double AMeV_to_MeV(const double &AMeV,  const double &A)   {return AMeV*A;};
+	static inline double um_to_mgcm2(const double &um,    const double &rho) {return rho*um/10000.;};
+	static inline double mgcm2_to_um(const double &mgcm2, const double &rho) {return 10000.*mgcm2/rho;};
 	
 private:
 	// *************** Elements and compounds database
